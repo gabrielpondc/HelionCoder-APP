@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/.github/schemas/tauri-v2.json",
+  "productName": "HelionCoder",
+  "version": "0.1.58",
+  "identifier": "com.helioncoder.desktop",
+  "build": {
+    "frontendDist": "../build",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "maximized": true,
+        "dragDropEnabled": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 28,
+          "y": 18
+        },
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.anthropic.com https://*.anthropic.com; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "HelionCoder desktop client",
+    "longDescription": "HelionCoder Desktop wraps the HelionCoder CLI with a visual chat, cowork, and code workspace. Local-first, no cloud required.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "13.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1 | libappindicator3-1",
+          "xclip | xsel"
+        ],
+        "recommends": [
+          "wl-clipboard",
+          "fonts-noto-cjk | fonts-wqy-microhei"
+        ]
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}
