@@ -1,6 +1,6 @@
 [package]
 name = "helioncoder-desktop"
-version = "0.1.58"
+version = "0.5.0"
 edition = "2021"
 description = "HelionCoder desktop client for chat, cowork, and code workflows"
 license = "Apache-2.0"

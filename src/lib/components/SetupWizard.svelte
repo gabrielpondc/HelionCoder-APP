@@ -56,6 +56,7 @@
 
   // Done state
   let doneTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+  const HELION_CLI_VERSION = "0.5.0";
 
   // Start checking on mount
   $effect(() => {
@@ -161,7 +162,7 @@
         unlistenReplace();
       };
 
-      const success = await installHelioncoderCli();
+      const success = await installHelioncoderCli(HELION_CLI_VERSION);
       if (!success) {
         cliInstallStatus = "failed";
         cliInstallError = t("setup_installFailedDesc");
@@ -356,13 +357,13 @@
   const UNIX_INSTALL_LATEST =
     "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh";
   const UNIX_INSTALL_VERSION =
-    "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh -s -- 0.0.4";
+    `curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh -s -- ${HELION_CLI_VERSION}`;
   const UNIX_UNINSTALL =
     "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/uninstall.sh | sh";
   const WINDOWS_INSTALL_LATEST =
     "iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex";
   const WINDOWS_INSTALL_VERSION =
-    '$env:HELION_VERSION="0.0.4"; iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex';
+    `$env:HELION_VERSION="${HELION_CLI_VERSION}"; iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex`;
   const WINDOWS_UNINSTALL =
     "iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/uninstall.ps1 -UseB | iex";
 
