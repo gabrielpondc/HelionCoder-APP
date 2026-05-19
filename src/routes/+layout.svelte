@@ -2533,10 +2533,11 @@
                   : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
                 onclick={() => selectAppMode(mode.id)}
                 title={mode.title()}
+                aria-label={mode.label()}
               >
                 {#if mode.id === "chat"}
                   <svg
-                    class="h-3.5 w-3.5"
+                    class="h-3.5 w-3.5 shrink-0"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -2544,7 +2545,7 @@
                   >
                 {:else if mode.id === "cowork"}
                   <svg
-                    class="h-3.5 w-3.5"
+                    class="h-3.5 w-3.5 shrink-0"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -2557,15 +2558,15 @@
                   >
                 {:else}
                   <svg
-                    class="h-3.5 w-3.5"
+                    class="h-3.5 w-3.5 shrink-0"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"><path d="m8 9-4 3 4 3" /><path d="m16 9 4 3-4 3" /></svg
                   >
                 {/if}
-                {#if mode.id !== "chat"}
-                  <span>{mode.label()}</span>
+                {#if appMode === mode.id}
+                  <span class="min-w-0 truncate">{mode.label()}</span>
                 {/if}
               </button>
             {/each}
