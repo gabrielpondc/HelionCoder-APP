@@ -207,6 +207,8 @@ fn build_windows_install_command(version: Option<&str>) -> Result<Command, Strin
     let script = format!("iwr {} -UseB | iex", HELION_INSTALL_PS1_URL);
     command
         .arg("-NoProfile")
+        .arg("-WindowStyle")
+        .arg("Hidden")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-Command")

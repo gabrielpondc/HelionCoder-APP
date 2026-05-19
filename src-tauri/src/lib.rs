@@ -77,6 +77,12 @@ pub fn run() {
 
     log::info!("HelionCoder Desktop starting");
 
+    #[cfg(target_os = "windows")]
+    if !claim_windows_single_instance() {
+        log::warn!("[app] another HelionCoder instance is already running; exiting");
+        return;
+    }
+
     // Set up Windows Job Object so child processes are killed on crash/force-quit.
     // No-op on non-Windows.
     process_ext::setup_job_kill_on_close();
@@ -379,6 +385,28 @@ pub fn run() {
 
         let _ = (app_handle, event); // suppress unused warnings on non-macOS
     });
+}
+
+#[cfg(target_os = "windows")]
+fn claim_windows_single_instance() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    // Keep the mutex handle open for the lifetime of the process. Windows closes
+    // it when the process exits, so repeated accidental relaunches cannot create
+    // extra top-level windows while the first app is still alive.
+    let Ok(_handle) = (unsafe {
+        CreateMutexW(
+            None,
+            true,
+            w!("Local\\com.helioncoder.desktop.single-instance"),
+        )
+    }) else {
+        return true;
+    };
+
+    (unsafe { GetLastError() }) != ERROR_ALREADY_EXISTS
 }
 
 fn setup_app_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {

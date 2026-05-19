@@ -16,6 +16,30 @@ pub const HELION_AGENT_ID: &str = "helioncoder";
 pub const HELION_CLI_NAME: &str = "helion-coder";
 pub const HELION_CLI_ALIASES: &[&str] = &["helion-coder", "helioncoder"];
 
+#[cfg(windows)]
+fn push_windows_app_cli_dirs(dirs: &mut Vec<PathBuf>) {
+    if let Ok(d) = std::env::var("LOCALAPPDATA") {
+        if !d.is_empty() {
+            dirs.push(
+                PathBuf::from(&d)
+                    .join("Programs")
+                    .join("HelionCoder")
+                    .join("bin"),
+            );
+        }
+    }
+    if let Ok(d) = std::env::var("ProgramFiles") {
+        if !d.is_empty() {
+            dirs.push(PathBuf::from(&d).join("HelionCoder").join("bin"));
+        }
+    }
+    if let Ok(d) = std::env::var("ProgramFiles(x86)") {
+        if !d.is_empty() {
+            dirs.push(PathBuf::from(&d).join("HelionCoder").join("bin"));
+        }
+    }
+}
+
 /// Resolve an nvm alias recursively (e.g., default → lts/jod → 22).
 /// Returns the terminal version string (e.g., "22", "v22.22.0") or None.
 /// Handles chains like: default → lts/jod → 22, or default → node (unresolvable → None).
@@ -64,6 +88,7 @@ fn extra_path_dirs() -> Vec<PathBuf> {
                         dirs.push(PathBuf::from(&d).join("npm"));
                     }
                 }
+                push_windows_app_cli_dirs(&mut dirs);
                 dirs
             };
         }
@@ -82,6 +107,7 @@ fn extra_path_dirs() -> Vec<PathBuf> {
                 dirs.push(PathBuf::from(&d).join("npm"));
             }
         }
+        push_windows_app_cli_dirs(&mut dirs);
         dirs.extend([
             home.join(".npm-global").join("bin"),
             home.join(".helioncoder").join("bin"),
@@ -190,9 +216,8 @@ pub fn augmented_path() -> String {
 }
 
 /// Cross-platform binary lookup.
-/// - Windows: uses `where` command.
-/// - Unix: pure Rust PATH traversal (avoids dependency on `which` binary,
-///   which is not pre-installed on all Linux distros).
+/// Uses pure Rust PATH traversal so startup and plugin checks never spawn
+/// helper consoles from a GUI process.
 pub fn which_binary(name: &str) -> Option<String> {
     let result = which_binary_inner(name);
     match &result {
@@ -205,32 +230,7 @@ pub fn which_binary(name: &str) -> Option<String> {
 fn which_binary_inner(name: &str) -> Option<String> {
     #[cfg(windows)]
     {
-        let output = std::process::Command::new("where")
-            .arg(name)
-            .env("PATH", augmented_path())
-            .hide_console()
-            .output()
-            .ok()?;
-        if output.status.success() {
-            let out = String::from_utf8_lossy(&output.stdout);
-            let lines: Vec<&str> = out
-                .lines()
-                .map(|l| l.trim())
-                .filter(|l| !l.is_empty())
-                .collect();
-            // Prefer .cmd/.exe/.bat over bare name (which may be a Unix shell script → error 193)
-            let lo = |s: &str| s.to_ascii_lowercase();
-            lines
-                .iter()
-                .find(|l| {
-                    let l = lo(l);
-                    l.ends_with(".cmd") || l.ends_with(".exe") || l.ends_with(".bat")
-                })
-                .or_else(|| lines.first())
-                .map(|l| l.to_string())
-        } else {
-            None
-        }
+        find_windows_binary_on_path(name)
     }
     #[cfg(not(windows))]
     {
@@ -250,6 +250,95 @@ fn which_binary_inner(name: &str) -> Option<String> {
         }
         None
     }
+}
+
+#[cfg(windows)]
+fn find_windows_binary_on_path(name: &str) -> Option<String> {
+    let path = std::path::Path::new(name);
+    if path.is_absolute() || name.contains('\\') || name.contains('/') {
+        return path
+            .is_file()
+            .then(|| path.to_path_buf())
+            .filter(|p| !is_desktop_app_exe(p))
+            .map(|p| p.to_string_lossy().into_owned());
+    }
+
+    let has_extension = path.extension().is_some();
+    let extensions: Vec<String> = if has_extension {
+        vec![String::new()]
+    } else {
+        std::env::var_os("PATHEXT")
+            .map(|value| {
+                value
+                    .to_string_lossy()
+                    .split(';')
+                    .filter_map(|ext| {
+                        let ext = ext.trim();
+                        if ext.is_empty() {
+                            None
+                        } else if ext.starts_with('.') {
+                            Some(ext.to_string())
+                        } else {
+                            Some(format!(".{ext}"))
+                        }
+                    })
+                    .collect()
+            })
+            .filter(|exts: &Vec<String>| !exts.is_empty())
+            .unwrap_or_else(|| {
+                vec![
+                    ".CMD".to_string(),
+                    ".EXE".to_string(),
+                    ".BAT".to_string(),
+                    ".COM".to_string(),
+                ]
+            })
+    };
+
+    let path_os = std::ffi::OsString::from(augmented_path());
+    for dir in std::env::split_paths(&path_os) {
+        if has_extension {
+            let candidate = dir.join(name);
+            if candidate.is_file() && !is_desktop_app_exe(&candidate) {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+            continue;
+        }
+
+        for ext in &extensions {
+            let candidate = dir.join(format!("{name}{ext}"));
+            if candidate.is_file() && !is_desktop_app_exe(&candidate) {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn is_desktop_app_exe(path: &std::path::Path) -> bool {
+    if let Ok(current) = std::env::current_exe() {
+        if path
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&current.to_string_lossy())
+        {
+            return true;
+        }
+    }
+
+    let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if !file_name.eq_ignore_ascii_case("HelionCoder.exe") {
+        return false;
+    }
+
+    let parent_name = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str());
+    !parent_name.is_some_and(|name| name.eq_ignore_ascii_case("bin"))
 }
 
 /// One-shot fork: spawns `helioncoder --resume <sid> --fork-session -p "(fork checkpoint)"
@@ -472,8 +561,22 @@ pub(crate) fn resolve_helioncoder_path() -> String {
         return path.clone();
     }
     if let Some(path) = configured_helioncoder_path() {
-        *cached = Some(path.clone());
-        return path;
+        #[cfg(windows)]
+        if is_desktop_app_exe(std::path::Path::new(&path)) {
+            log::warn!(
+                "[claude_stream] ignoring configured Desktop executable while resolving CLI: {}",
+                path
+            );
+        } else {
+            *cached = Some(path.clone());
+            return path;
+        }
+
+        #[cfg(not(windows))]
+        {
+            *cached = Some(path.clone());
+            return path;
+        }
     }
     let home = crate::storage::home_dir()
         .filter(|h| !h.is_empty())
@@ -492,6 +595,7 @@ pub(crate) fn resolve_helioncoder_path() -> String {
                 bases.push(PathBuf::from(&d).join("npm"));
             }
         }
+        push_windows_app_cli_dirs(&mut bases);
         if let Some(ref h) = home {
             bases.push(h.join(".helioncoder").join("bin"));
             bases.push(h.join(".local").join("bin"));
@@ -529,15 +633,24 @@ pub(crate) fn resolve_helioncoder_path() -> String {
     };
 
     for c in &candidates {
-        if c.exists() {
-            let path_str = c.to_string_lossy().to_string();
-            log::debug!(
-                "[claude_stream] resolved HelionCoder binary (cached): {}",
+        if !c.is_file() {
+            continue;
+        }
+        let path_str = c.to_string_lossy().to_string();
+        #[cfg(windows)]
+        if is_desktop_app_exe(c) {
+            log::warn!(
+                "[claude_stream] ignoring Desktop executable while resolving CLI: {}",
                 path_str
             );
-            *cached = Some(path_str.clone());
-            return path_str;
+            continue;
         }
+        log::debug!(
+            "[claude_stream] resolved HelionCoder binary (cached): {}",
+            path_str
+        );
+        *cached = Some(path_str.clone());
+        return path_str;
     }
     log::debug!(
         "[claude_stream] HelionCoder binary not found in candidates, falling back to PATH lookup"

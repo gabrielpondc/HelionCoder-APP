@@ -435,6 +435,8 @@ fn spawn_app_update_script(
     let mut command = {
         let mut cmd = std::process::Command::new("powershell");
         cmd.arg("-NoProfile")
+            .arg("-WindowStyle")
+            .arg("Hidden")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
             .arg("-File")
