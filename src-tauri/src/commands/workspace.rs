@@ -334,7 +334,9 @@ fn dedupe_tools(tools: Vec<WorkspaceTool>) -> Vec<WorkspaceTool> {
 
 fn which_binary(bin: &str) -> Option<String> {
     #[cfg(target_os = "windows")]
-    let output = Command::new("where").arg(bin).output().ok()?;
+    {
+        return find_binary_on_windows_path(bin);
+    }
 
     #[cfg(not(target_os = "windows"))]
     let output = Command::new("which").arg(bin).output().ok()?;
@@ -353,6 +355,68 @@ fn which_binary(bin: &str) -> Option<String> {
     } else {
         Some(path)
     }
+}
+
+#[cfg(target_os = "windows")]
+fn find_binary_on_windows_path(bin: &str) -> Option<String> {
+    let bin_path = Path::new(bin);
+    if bin_path.is_absolute() || bin.contains('\\') || bin.contains('/') {
+        return bin_path
+            .is_file()
+            .then(|| bin_path.to_string_lossy().to_string());
+    }
+
+    let has_extension = bin_path.extension().is_some();
+    let extensions: Vec<String> = if has_extension {
+        vec![String::new()]
+    } else {
+        std::env::var_os("PATHEXT")
+            .map(|value| {
+                value
+                    .to_string_lossy()
+                    .split(';')
+                    .filter_map(|ext| {
+                        let ext = ext.trim();
+                        if ext.is_empty() {
+                            None
+                        } else if ext.starts_with('.') {
+                            Some(ext.to_string())
+                        } else {
+                            Some(format!(".{ext}"))
+                        }
+                    })
+                    .collect()
+            })
+            .filter(|exts: &Vec<String>| !exts.is_empty())
+            .unwrap_or_else(|| {
+                vec![
+                    ".COM".to_string(),
+                    ".EXE".to_string(),
+                    ".BAT".to_string(),
+                    ".CMD".to_string(),
+                ]
+            })
+    };
+
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        if has_extension {
+            let candidate = dir.join(bin);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+            continue;
+        }
+
+        for ext in &extensions {
+            let candidate = dir.join(format!("{bin}{ext}"));
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -409,7 +473,7 @@ fn icon_data_url_for_source(source: &Path) -> Option<String> {
         if source
             .extension()
             .and_then(|s| s.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("ico"))
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"))
         {
             return icon_data_url_for_windows_source(source);
         }
@@ -514,46 +578,11 @@ fn macos_bundle_icon_name(app_path: &Path) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn icon_data_url_for_windows_source(source: &Path) -> Option<String> {
-    if source
-        .extension()
-        .and_then(|s| s.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"))
-    {
-        let bytes = fs::read(source).ok()?;
-        return Some(format!(
-            "data:image/x-icon;base64,{}",
-            general_purpose::STANDARD.encode(bytes)
-        ));
-    }
-
-    cached_icon_data_url(&source.to_string_lossy(), |out| {
-        let script = format!(
-            "Add-Type -AssemblyName System.Drawing; \
-             $icon=[System.Drawing.Icon]::ExtractAssociatedIcon({}); \
-             if ($null -eq $icon) {{ exit 1 }}; \
-             $bmp=$icon.ToBitmap(); \
-             $bmp.Save({}, [System.Drawing.Imaging.ImageFormat]::Png); \
-             $bmp.Dispose(); $icon.Dispose();",
-            powershell_quote(&source.to_string_lossy()),
-            powershell_quote(&out.to_string_lossy()),
-        );
-        Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &script,
-            ])
-            .status()
-            .ok()
-            .is_some_and(|status| status.success())
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn powershell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    let bytes = fs::read(source).ok()?;
+    Some(format!(
+        "data:image/x-icon;base64,{}",
+        general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 fn open_source_launcher(source: &str, path: &Path) -> Result<(), String> {
@@ -870,40 +899,11 @@ fn detect_windows_tool(candidate: &WindowsToolCandidate) -> Option<WorkspaceTool
 }
 
 #[cfg(target_os = "windows")]
-fn query_windows_app_path(exe_name: &str) -> Option<PathBuf> {
-    let keys = [
-        format!(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\{}",
-            exe_name
-        ),
-        format!(
-            r"HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\{}",
-            exe_name
-        ),
-        format!(
-            r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\{}",
-            exe_name
-        ),
-    ];
-
-    for key in keys {
-        let output = Command::new("reg")
-            .args(["query", &key, "/ve"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            continue;
-        }
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some((_, value)) = line.split_once("REG_SZ") {
-                let path = PathBuf::from(value.trim().trim_matches('"'));
-                if path.exists() {
-                    return Some(path);
-                }
-            }
-        }
-    }
-
+fn query_windows_app_path(_exe_name: &str) -> Option<PathBuf> {
+    // Avoid spawning reg.exe during startup. Some Windows installs show a
+    // blocking application-error dialog when reg.exe is launched from a GUI app.
+    // The remaining PATH, Program Files, and Toolbox scans cover the launchers
+    // we expose without creating external helper processes.
     None
 }
 

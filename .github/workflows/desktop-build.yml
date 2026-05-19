@@ -30,6 +30,10 @@ jobs:
             name: windows
             rust-target: ""
             args: ""
+          - platform: windows-11-arm
+            name: windows-arm64
+            rust-target: aarch64-pc-windows-msvc
+            args: --target aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.platform }}
     name: Build ${{ matrix.name }}
