@@ -335,25 +335,27 @@ fn dedupe_tools(tools: Vec<WorkspaceTool>) -> Vec<WorkspaceTool> {
 fn which_binary(bin: &str) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        return find_binary_on_windows_path(bin);
+        find_binary_on_windows_path(bin)
     }
 
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new("which").arg(bin).output().ok()?;
+    {
+        let output = Command::new("which").arg(bin).output().ok()?;
 
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
+        if !output.status.success() {
+            return None;
+        }
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if path.is_empty() {
+            None
+        } else {
+            Some(path)
+        }
     }
 }
 
@@ -935,20 +937,20 @@ fn find_named_file(root: &Path, file_names: &[&str], max_depth: u8) -> Option<Pa
 
 fn open_macos_or_cli(
     path: &Path,
-    bundle_ids: &[&str],
-    app_names: &[&str],
+    _bundle_ids: &[&str],
+    _app_names: &[&str],
     cli_bins: &[&str],
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        for bundle_id in bundle_ids {
+        for bundle_id in _bundle_ids {
             let mut cmd = Command::new("open");
             cmd.args(["-b", bundle_id]).arg(path);
             if run(cmd).is_ok() {
                 return Ok(());
             }
         }
-        for app_name in app_names {
+        for app_name in _app_names {
             let mut cmd = Command::new("open");
             cmd.args(["-a", app_name]).arg(path);
             if run(cmd).is_ok() {
