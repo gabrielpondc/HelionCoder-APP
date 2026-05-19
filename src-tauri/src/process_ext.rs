@@ -19,16 +19,30 @@ pub trait HideConsole {
     fn hide_console(&mut self) -> &mut Self;
 }
 
+/// Extension trait for updater helper processes that must outlive the app.
+///
+/// The normal Windows job object intentionally kills child processes when the
+/// app exits. Self-update helpers are the one exception: they need to keep
+/// running after HelionCoder closes so they can replace the current binary/app
+/// bundle and relaunch it.
+pub trait DetachForUpdate {
+    fn detach_for_update(&mut self) -> &mut Self;
+}
+
 // ── Windows implementation ──────────────────────────────────────────────────
 
 #[cfg(windows)]
 mod imp {
-    use super::HideConsole;
+    use super::{DetachForUpdate, HideConsole};
     use std::os::windows::process::CommandExt;
 
     /// `CREATE_NO_WINDOW` — prevents the OS from creating a visible console
     /// window for the child process. Safe for GUI apps that capture stdio.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    /// `CREATE_BREAKAWAY_FROM_JOB` — lets the updater helper survive app exit.
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    /// `CREATE_NEW_PROCESS_GROUP` — keeps Ctrl events and console state isolated.
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
     impl HideConsole for std::process::Command {
         fn hide_console(&mut self) -> &mut Self {
@@ -41,13 +55,29 @@ mod imp {
             self.creation_flags(CREATE_NO_WINDOW)
         }
     }
+
+    impl DetachForUpdate for std::process::Command {
+        fn detach_for_update(&mut self) -> &mut Self {
+            self.creation_flags(
+                CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP,
+            )
+        }
+    }
+
+    impl DetachForUpdate for tokio::process::Command {
+        fn detach_for_update(&mut self) -> &mut Self {
+            self.creation_flags(
+                CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP,
+            )
+        }
+    }
 }
 
 // ── Non-Windows no-op ───────────────────────────────────────────────────────
 
 #[cfg(not(windows))]
 mod imp {
-    use super::HideConsole;
+    use super::{DetachForUpdate, HideConsole};
 
     impl HideConsole for std::process::Command {
         fn hide_console(&mut self) -> &mut Self {
@@ -57,6 +87,18 @@ mod imp {
 
     impl HideConsole for tokio::process::Command {
         fn hide_console(&mut self) -> &mut Self {
+            self // no-op
+        }
+    }
+
+    impl DetachForUpdate for std::process::Command {
+        fn detach_for_update(&mut self) -> &mut Self {
+            self // no-op
+        }
+    }
+
+    impl DetachForUpdate for tokio::process::Command {
+        fn detach_for_update(&mut self) -> &mut Self {
             self // no-op
         }
     }
@@ -110,6 +152,7 @@ pub fn setup_job_kill_on_close() {
 
     // ── Win32 constants ─────────────────────────────────────────────────
 
+    const JOB_OBJECT_LIMIT_BREAKAWAY_OK: u32 = 0x0800;
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
     /// `JobObjectExtendedLimitInformation` information class = 9.
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
@@ -195,7 +238,8 @@ pub fn setup_job_kill_on_close() {
     // ── Step 2: Set KILL_ON_JOB_CLOSE limit ─────────────────────────────
 
     let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    info.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
 
     let ok = unsafe {
         SetInformationJobObject(

@@ -1178,6 +1178,12 @@ export interface UpdateInfo {
   latestVersion: string;
   currentVersion: string;
   downloadUrl: string;
+  assetName: string;
+}
+
+export interface UpdateCommandResult {
+  success: boolean;
+  output: string;
 }
 
 // ── Changelog ──

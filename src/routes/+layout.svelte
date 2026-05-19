@@ -12,6 +12,8 @@
     listMemoryFiles,
     renameRun,
     softDeleteRuns,
+    checkForUpdates,
+    installAppUpdate,
   } from "$lib/api";
   import ProjectFolderItem from "$lib/components/ProjectFolderItem.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
@@ -20,7 +22,6 @@
   import PermissionsModal from "$lib/components/PermissionsModal.svelte";
   import Modal from "$lib/components/Modal.svelte";
   import CliSessionBrowser from "$lib/components/CliSessionBrowser.svelte";
-  import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import FolderPicker from "$lib/components/FolderPicker.svelte";
   import type {
     TaskRun,
@@ -30,6 +31,7 @@
     PromptFavorite,
     PromptSearchResult,
     MemoryFileCandidate,
+    UpdateInfo,
   } from "$lib/types";
   import { cwdDisplayLabel, truncate, snippetAround, relativeTime } from "$lib/utils/format";
   import { filterVisibleCandidates } from "$lib/utils/memory-helpers";
@@ -83,6 +85,9 @@
   let showCliBrowser = $state(false);
   let permissionsModalOpen = $state(false);
   let searchPanelOpen = $state(false);
+  let layoutAppUpdateInfo = $state<UpdateInfo | null>(null);
+  let layoutAppUpdateChecking = $state(false);
+  let layoutAppUpdating = $state(false);
   let themeMenuOpen = $state(false);
   let profileModalOpen = $state(false);
   let profileNameDraft = $state("");
@@ -94,6 +99,7 @@
   let isWindowFullscreen = $state(false);
   let isGlassDesktop = $derived(isMacDesktop || isWindowsDesktop);
   let reserveMacTrafficLights = $derived(isMacDesktop && !isWindowFullscreen);
+  let layoutAppUpdateAvailable = $derived(!!layoutAppUpdateInfo?.hasUpdate);
   type WindowEffectsConfig = {
     effects: string[];
     state?: string;
@@ -292,6 +298,38 @@
       await tick();
     }
     window.dispatchEvent(new CustomEvent("ocv:command-open-model-selector"));
+  }
+
+  async function refreshLayoutAppUpdate() {
+    if (layoutAppUpdateChecking) return;
+    layoutAppUpdateChecking = true;
+    try {
+      layoutAppUpdateInfo = await checkForUpdates();
+    } catch (e) {
+      dbgWarn("layout", "app update check failed", e);
+    } finally {
+      layoutAppUpdateChecking = false;
+    }
+  }
+
+  async function handleLayoutAppUpdate() {
+    if (layoutAppUpdating) return;
+    const confirmed = window.confirm(t("appUpdate_restartConfirm"));
+    if (!confirmed) return;
+    layoutAppUpdating = true;
+    try {
+      const result = await installAppUpdate(
+        layoutAppUpdateInfo?.downloadUrl,
+        layoutAppUpdateInfo?.assetName,
+      );
+      if (!result.success) {
+        window.alert(result.output || t("infoPanel_updateFailed"));
+        layoutAppUpdating = false;
+      }
+    } catch (e) {
+      layoutAppUpdating = false;
+      window.alert(String((e as Error)?.message ?? e));
+    }
   }
 
   // ── Folder tree state ──
@@ -936,6 +974,7 @@
     loadSettings();
     loadSidebarFavorites();
     loadAgentSettingsCache();
+    void refreshLayoutAppUpdate();
     window.dispatchEvent(new CustomEvent("helion:mode-change", { detail: { mode: appMode } }));
 
     // Load saved CWD and pinned folders from localStorage
@@ -2446,6 +2485,40 @@
                 ><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg
               >
             </button>
+            {#if layoutAppUpdateAvailable}
+              <button
+                type="button"
+                class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-sidebar-accent/60 hover:text-primary disabled:pointer-events-none disabled:opacity-60"
+                onclick={() => void handleLayoutAppUpdate()}
+                disabled={layoutAppUpdating}
+                title={t("infoPanel_updateApp")}
+                aria-label={t("infoPanel_updateApp")}
+              >
+                {#if layoutAppUpdating}
+                  <svg
+                    class="h-4 w-4 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    ><path d="M21 12a9 9 0 1 1-2.64-6.36" /></svg
+                  >
+                {:else}
+                  <svg
+                    class="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    ><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg
+                  >
+                {/if}
+              </button>
+            {/if}
           </div>
         </div>
 
@@ -2491,7 +2564,9 @@
                     stroke-width="2"><path d="m8 9-4 3 4 3" /><path d="m16 9 4 3-4 3" /></svg
                   >
                 {/if}
-                <span>{mode.label()}</span>
+                {#if mode.id !== "chat"}
+                  <span>{mode.label()}</span>
+                {/if}
               </button>
             {/each}
           </div>
@@ -3563,7 +3638,6 @@
       {/if}
       </div>
     </div>
-    <UpdateBanner />
     <!-- Top bar (non-chat pages only — chat uses SessionStatusBar) -->
     {#if !isChatPage}
       <header class="hidden h-12 items-center gap-3 border-b px-4">

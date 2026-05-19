@@ -269,6 +269,8 @@ pub fn run() {
             commands::cli_sync::import_cli_session,
             commands::cli_sync::sync_cli_session,
             commands::updates::check_for_updates,
+            commands::updates::install_app_update,
+            commands::updates::run_cli_update,
             commands::web_server::get_web_server_status,
             commands::web_server::get_web_server_token,
             commands::web_server::regenerate_web_server_token,

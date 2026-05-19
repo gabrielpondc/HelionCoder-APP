@@ -2,6 +2,9 @@ name: Build desktop app
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -23,7 +26,7 @@ jobs:
             name: linux
             rust-target: ""
             args: ""
-          - platform: windows-latest
+          - platform: windows-2022
             name: windows
             rust-target: ""
             args: ""
@@ -40,6 +43,29 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
+
+      - name: Verify release version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+          TAURI_VERSION="$(node -e "const fs = require('fs'); console.log(JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8')).version)")"
+          CARGO_VERSION="$(node -e "const fs = require('fs'); const text = fs.readFileSync('src-tauri/Cargo.toml', 'utf8'); const match = text.match(/^version = \"([^\"]+)\"$/m); if (!match) process.exit(2); console.log(match[1])")"
+          TAG="v${VERSION}"
+
+          if [ "$VERSION" != "$LOCK_VERSION" ] || [ "$VERSION" != "$TAURI_VERSION" ] || [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "Version mismatch: package.json=${VERSION}, package-lock.json=${LOCK_VERSION}, tauri.conf.json=${TAURI_VERSION}, Cargo.toml=${CARGO_VERSION}." >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "${GITHUB_REF_NAME:-}" != "$TAG" ]; then
+            echo "Git tag (${GITHUB_REF_NAME}) does not match package version tag (${TAG})." >&2
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
         if: matrix.rust-target == ''
@@ -61,10 +87,17 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: HelionCoder Desktop ${{ steps.version.outputs.tag }}
+          releaseBody: Desktop release for HelionCoder ${{ steps.version.outputs.tag }}.
+          releaseDraft: false
+          prerelease: false
+          releaseCommitish: ${{ github.sha }}
+          generateReleaseNotes: true
           tauriScript: npm run tauri
           args: ${{ matrix.args }}
-          uploadWorkflowArtifacts: true
+          assetNamePattern: HelionCoder_[version]_[platform]_[arch][setup].[ext]

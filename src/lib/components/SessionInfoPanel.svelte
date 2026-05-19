@@ -1,10 +1,13 @@
 <script lang="ts">
-  import type { SessionInfoData } from "$lib/types";
+  import type { SessionInfoData, UpdateInfo } from "$lib/types";
+  import { checkForUpdates, installAppUpdate, runCliUpdate } from "$lib/api";
   import { goto } from "$app/navigation";
   import { t } from "$lib/i18n/index.svelte";
-  import { dbg } from "$lib/utils/debug";
+  import { loadCliVersionInfo } from "$lib/stores";
+  import { dbg, dbgWarn } from "$lib/utils/debug";
   import { fmtNumber } from "$lib/i18n/format";
   import { formatDuration } from "$lib/utils/format";
+  import { onMount } from "svelte";
 
   let {
     info = null,
@@ -41,6 +44,76 @@
   });
 
   // ── Helpers ──
+  let appVersion = $state("");
+  let appUpdateInfo = $state<UpdateInfo | null>(null);
+  let appUpdateChecking = $state(false);
+  let appUpdating = $state(false);
+  let cliUpdating = $state(false);
+
+  let appUpdateAvailable = $derived(!!appUpdateInfo?.hasUpdate);
+  let appCurrentVersion = $derived(appUpdateInfo?.currentVersion || appVersion || "");
+  let appLatestVersion = $derived(appUpdateInfo?.latestVersion || "");
+
+  onMount(() => {
+    void loadAppVersion();
+    void refreshAppUpdate();
+  });
+
+  async function loadAppVersion() {
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      appVersion = await getVersion();
+    } catch {
+      appVersion = "";
+    }
+  }
+
+  async function refreshAppUpdate() {
+    if (appUpdateChecking) return;
+    appUpdateChecking = true;
+    try {
+      const update = await checkForUpdates();
+      appUpdateInfo = update;
+      if (update.currentVersion) appVersion = update.currentVersion;
+    } catch (e) {
+      dbgWarn("info-panel", "app update check failed", e);
+    } finally {
+      appUpdateChecking = false;
+    }
+  }
+
+  async function handleCliUpdate() {
+    if (cliUpdating) return;
+    cliUpdating = true;
+    try {
+      const result = await runCliUpdate();
+      await loadCliVersionInfo();
+      if (!result.success) {
+        window.alert(result.output || t("infoPanel_updateFailed"));
+      }
+    } catch (e) {
+      window.alert(String((e as Error)?.message ?? e));
+    } finally {
+      cliUpdating = false;
+    }
+  }
+
+  async function handleAppUpdate() {
+    if (appUpdating) return;
+    const confirmed = window.confirm(t("appUpdate_restartConfirm"));
+    if (!confirmed) return;
+    appUpdating = true;
+    try {
+      const result = await installAppUpdate(appUpdateInfo?.downloadUrl, appUpdateInfo?.assetName);
+      if (!result.success) {
+        window.alert(result.output || t("infoPanel_updateFailed"));
+        appUpdating = false;
+      }
+    } catch (e) {
+      appUpdating = false;
+      window.alert(String((e as Error)?.message ?? e));
+    }
+  }
 
   function shortSessionId(id: string | undefined): string {
     if (!id) return "—";
@@ -143,16 +216,47 @@
         {#if info.cliVersion}
           <div class="flex items-center justify-between text-[11px]">
             <span class="text-muted-foreground">{t("infoPanel_cliVersion")}</span>
-            <span class="text-foreground/80">
-              v{info.cliVersion}
+            <span class="ml-2 flex min-w-0 items-center gap-1 text-right text-foreground/80">
+              <span class="tabular-nums">v{info.cliVersion}</span>
               {#if info.cliUpdateAvailable}
-                <span class="text-primary/80 ml-1"
-                  >{t("infoPanel_cliUpdateAvailable", { version: info.cliUpdateAvailable })}</span
+                <span class="text-primary/60">→</span>
+                <button
+                  type="button"
+                  class="titlebar-no-drag truncate text-primary/85 transition-colors hover:text-primary disabled:pointer-events-none disabled:opacity-60"
+                  onclick={handleCliUpdate}
+                  disabled={cliUpdating}
+                  title={t("infoPanel_updateCli")}
                 >
+                  {cliUpdating
+                    ? t("infoPanel_updating")
+                    : t("infoPanel_cliUpdateAvailable", { version: info.cliUpdateAvailable })}
+                </button>
               {/if}
             </span>
           </div>
         {/if}
+        <div class="flex items-center justify-between text-[11px]">
+          <span class="text-muted-foreground">{t("infoPanel_appVersion")}</span>
+          <span class="ml-2 flex min-w-0 items-center gap-1 text-right text-foreground/80">
+            <span class="tabular-nums">{appCurrentVersion ? `v${appCurrentVersion}` : "—"}</span>
+            {#if appUpdateAvailable}
+              <span class="text-primary/60">→</span>
+              <button
+                type="button"
+                class="titlebar-no-drag truncate text-primary/85 transition-colors hover:text-primary disabled:pointer-events-none disabled:opacity-60"
+                onclick={handleAppUpdate}
+                disabled={appUpdating}
+                title={t("infoPanel_updateApp")}
+              >
+                {appUpdating
+                  ? t("infoPanel_updating")
+                  : t("infoPanel_appUpdateAvailable", { version: appLatestVersion })}
+              </button>
+            {:else if appUpdateChecking}
+              <span class="text-muted-foreground/70">{t("appUpdate_checking")}</span>
+            {/if}
+          </span>
+        </div>
         <div class="flex items-center justify-between text-[11px]">
           <span class="text-muted-foreground">{t("infoPanel_permissionMode")}</span>
           <span class="text-foreground/80">{info.permissionMode || "—"}</span>

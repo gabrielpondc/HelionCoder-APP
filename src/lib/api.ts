@@ -1121,6 +1121,22 @@ export async function checkForUpdates(): Promise<import("./types").UpdateInfo> {
   return invoke<import("./types").UpdateInfo>("check_for_updates");
 }
 
+export async function runCliUpdate(): Promise<import("./types").UpdateCommandResult> {
+  dbg("api", "runCliUpdate");
+  return invoke<import("./types").UpdateCommandResult>("run_cli_update");
+}
+
+export async function installAppUpdate(
+  downloadUrl?: string,
+  assetName?: string,
+): Promise<import("./types").UpdateCommandResult> {
+  dbg("api", "installAppUpdate", { hasUrl: !!downloadUrl, assetName });
+  return invoke<import("./types").UpdateCommandResult>("install_app_update", {
+    downloadUrl: downloadUrl || null,
+    assetName: assetName || null,
+  });
+}
+
 // ── Changelog ──
 
 export async function getChangelog(): Promise<ChangelogEntry[]> {
