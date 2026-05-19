@@ -1,4 +1,6 @@
-use crate::agent::claude_stream::{augmented_path, resolve_claude_path};
+use crate::agent::claude_stream::{
+    augmented_path, helioncoder_cli_not_found_error, try_resolve_claude_path,
+};
 use crate::models::{
     ConfiguredMcpServer, McpRegistrySearchResult, McpRegistryServer, PluginOperationResult,
     ProviderHealth,
@@ -454,7 +456,7 @@ pub async fn add_server(
 
     let _lock = INSTALL_LOCK.lock().await;
 
-    let claude_bin = resolve_claude_path();
+    let claude_bin = try_resolve_claude_path().ok_or_else(helioncoder_cli_not_found_error)?;
     let path_env = augmented_path();
 
     let mut cmd = Command::new(&claude_bin);
@@ -520,8 +522,8 @@ pub async fn add_server(
 
     cmd.hide_console().kill_on_drop(true);
     let child = cmd.spawn().map_err(|e| {
-        log::error!("[mcp_registry] failed to spawn claude: {}", e);
-        format!("Failed to spawn claude: {e}")
+        log::error!("[mcp_registry] failed to spawn HelionCoder CLI: {}", e);
+        format!("Failed to spawn HelionCoder CLI: {e}")
     })?;
 
     let result = timeout(CMD_TIMEOUT, child.wait_with_output()).await;
@@ -595,7 +597,7 @@ pub async fn remove_server(
 
     let _lock = INSTALL_LOCK.lock().await;
 
-    let claude_bin = resolve_claude_path();
+    let claude_bin = try_resolve_claude_path().ok_or_else(helioncoder_cli_not_found_error)?;
     let path_env = augmented_path();
 
     let mut cmd = Command::new(&claude_bin);
@@ -621,8 +623,8 @@ pub async fn remove_server(
 
     cmd.hide_console().kill_on_drop(true);
     let child = cmd.spawn().map_err(|e| {
-        log::error!("[mcp_registry] failed to spawn claude: {}", e);
-        format!("Failed to spawn claude: {e}")
+        log::error!("[mcp_registry] failed to spawn HelionCoder CLI: {}", e);
+        format!("Failed to spawn HelionCoder CLI: {e}")
     })?;
 
     let result = timeout(CMD_TIMEOUT, child.wait_with_output()).await;

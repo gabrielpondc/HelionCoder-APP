@@ -272,7 +272,8 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateInfo, Stri
 
 #[tauri::command]
 pub async fn run_cli_update() -> Result<UpdateCommandResult, String> {
-    let cli_bin = crate::agent::claude_stream::resolve_helioncoder_path();
+    let cli_bin = crate::agent::claude_stream::try_resolve_helioncoder_path()
+        .ok_or_else(crate::agent::claude_stream::helioncoder_cli_not_found_error)?;
     let path_env = crate::agent::claude_stream::augmented_path();
     log::debug!("[updates] running CLI update: {}", cli_bin);
 

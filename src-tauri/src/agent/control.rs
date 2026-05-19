@@ -1,4 +1,4 @@
-use crate::agent::claude_stream::{augmented_path, resolve_claude_path};
+use crate::agent::claude_stream::{augmented_path, try_resolve_claude_path};
 use crate::models::{now_iso, CliAccount, CliCommand, CliInfo, CliInfoError, CliModelInfo};
 use crate::process_ext::HideConsole;
 use serde_json::Value;
@@ -47,19 +47,11 @@ pub async fn get_cli_info(cache: &CliInfoCache, force: bool) -> Result<CliInfo, 
     }
 
     // Resolve binary
-    let claude_bin = resolve_claude_path();
+    let claude_bin = try_resolve_claude_path().ok_or_else(|| CliInfoError {
+        code: "cli_not_found".to_string(),
+        message: "HelionCoder CLI binary not found".to_string(),
+    })?;
     log::debug!("[control] resolved HelionCoder binary: {}", claude_bin);
-
-    if claude_bin == crate::agent::claude_stream::HELION_CLI_NAME
-        && crate::agent::claude_stream::HELION_CLI_ALIASES
-            .iter()
-            .all(|name| crate::agent::claude_stream::which_binary(name).is_none())
-    {
-        return Err(CliInfoError {
-            code: "cli_not_found".to_string(),
-            message: "HelionCoder CLI binary not found".to_string(),
-        });
-    }
 
     // Spawn process
     let path_env = augmented_path();

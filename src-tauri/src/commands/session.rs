@@ -1773,7 +1773,8 @@ async fn spawn_cli_process(
             })?
     } else {
         // Local branch: existing logic
-        let claude_bin = claude_stream::resolve_claude_path();
+        let claude_bin = claude_stream::try_resolve_claude_path()
+            .ok_or_else(claude_stream::helioncoder_cli_not_found_error)?;
         log::debug!("[session] resolved binary: {}", claude_bin);
 
         let mut cmd = tokio::process::Command::new(&claude_bin);
@@ -1835,21 +1836,15 @@ async fn spawn_cli_process(
         }
 
         cmd.hide_console().kill_on_drop(true).spawn().map_err(|e| {
-            log::error!("[session] Failed to spawn claude: {}", e);
-            format!("Failed to spawn claude: {}", e)
+            log::error!("[session] Failed to spawn HelionCoder CLI: {}", e);
+            format!("Failed to spawn HelionCoder CLI: {}", e)
         })?
     };
     log::debug!("[session] child process spawned, pid={:?}", child.id());
 
-    let stdin = child.stdin.take().ok_or("Failed to capture claude stdin")?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Failed to capture claude stdout")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Failed to capture claude stderr")?;
+    let stdin = child.stdin.take().ok_or("Failed to capture CLI stdin")?;
+    let stdout = child.stdout.take().ok_or("Failed to capture CLI stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture CLI stderr")?;
 
     // Initial prompt is now sent via ActorCommand::SendMessage after actor spawn.
     // This ensures ALL user messages go through the Turn Transaction Engine.
@@ -2031,7 +2026,8 @@ conversation history.\n</system-reminder>\n\n{}{}",
     );
 
     // Build CLI args: no --resume and no --fork-session by design.
-    let claude_bin = claude_stream::resolve_claude_path();
+    let claude_bin = claude_stream::try_resolve_claude_path()
+        .ok_or_else(claude_stream::helioncoder_cli_not_found_error)?;
     let mut claude_args: Vec<String> = vec![
         "--no-session-persistence".into(),
         "-p".into(),
@@ -2119,7 +2115,7 @@ conversation history.\n</system-reminder>\n\n{}{}",
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn side question CLI: {}", e))?;
+        .map_err(|e| format!("Failed to spawn HelionCoder CLI: {}", e))?;
 
     let stdout = child
         .stdout

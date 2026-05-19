@@ -267,7 +267,8 @@ fn applescript_quote(value: &str) -> String {
 pub async fn run_claude_login(app: AppHandle) -> Result<bool, String> {
     log::debug!("[onboarding] run_claude_login");
 
-    let claude_bin = claude_stream::resolve_claude_path();
+    let claude_bin = claude_stream::try_resolve_claude_path()
+        .ok_or_else(claude_stream::helioncoder_cli_not_found_error)?;
     let path_env = claude_stream::augmented_path();
 
     let mut child = Command::new(&claude_bin)
@@ -540,11 +541,7 @@ pub(crate) fn read_env_from_shell_config(_var_name: &str) -> Option<(String, Str
 
 /// Check CLI OAuth status via subprocess. Used by onboarding wizard (slower but gets account email).
 pub(crate) async fn check_cli_oauth() -> (bool, Option<String>) {
-    let claude_bin = claude_stream::resolve_claude_path();
-    let found_cli = claude_stream::HELION_CLI_ALIASES
-        .iter()
-        .any(|name| which_binary(name));
-    if claude_bin != claude_stream::HELION_CLI_NAME || found_cli {
+    if let Some(claude_bin) = claude_stream::try_resolve_claude_path() {
         match tokio::time::timeout(
             std::time::Duration::from_secs(10),
             Command::new(&claude_bin)

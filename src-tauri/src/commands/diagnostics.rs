@@ -31,13 +31,16 @@ pub async fn check_agent_cli(agent: String) -> Result<CliCheckResult, String> {
     log::debug!("[diagnostics] check_agent_cli: agent={}", agent);
     let aug_path = augmented_path();
 
-    let resolved = crate::agent::claude_stream::resolve_claude_path();
-    let found = resolved_cli_available(&resolved);
-    let path = found.then_some(resolved.clone());
+    let resolved = crate::agent::claude_stream::try_resolve_claude_path();
+    let found = resolved
+        .as_deref()
+        .map(resolved_cli_available)
+        .unwrap_or(false);
+    let path = found.then(|| resolved.clone()).flatten();
 
     // Get version if found
-    let version = if found {
-        let ver_output = Command::new(&resolved)
+    let version = if let Some(resolved) = path.as_deref() {
+        let ver_output = Command::new(resolved)
             .arg("--version")
             .env("PATH", &aug_path)
             .hide_console()

@@ -30,7 +30,9 @@ pub fn build_agent_command(
                 HELION_CLI_NAME,
                 args.join(" ")
             );
-            Ok((crate::agent::claude_stream::resolve_claude_path(), args))
+            let binary = crate::agent::claude_stream::try_resolve_claude_path()
+                .ok_or_else(crate::agent::claude_stream::helioncoder_cli_not_found_error)?;
+            Ok((binary, args))
         }
         _ => Err(format!(
             "Unsupported agent: {}. Supported: {}",

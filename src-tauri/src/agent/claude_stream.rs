@@ -8,13 +8,21 @@ use crate::agent::adapter;
 use crate::models::RemoteHost;
 use crate::process_ext::HideConsole;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tokio::time::Duration;
 
 pub const HELION_AGENT_ID: &str = "helioncoder";
 pub const HELION_CLI_NAME: &str = "helion-coder";
 pub const HELION_CLI_ALIASES: &[&str] = &["helion-coder", "helioncoder"];
+pub const HELION_CLI_NOT_FOUND_CODE: &str = "cli_not_found";
+
+pub(crate) fn helioncoder_cli_not_found_error() -> String {
+    format!(
+        "{}: HelionCoder CLI not found. Install it or choose the CLI binary path in Settings.",
+        HELION_CLI_NOT_FOUND_CODE
+    )
+}
 
 #[cfg(windows)]
 fn push_windows_app_cli_dirs(dirs: &mut Vec<PathBuf>) {
@@ -357,12 +365,10 @@ pub async fn fork_oneshot(
     models: Option<&[String]>,
     extra_env: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
-    let claude_bin = resolve_claude_path();
     log::debug!(
-        "[fork_oneshot] source_sid={}, cwd={}, binary={}, remote={:?}",
+        "[fork_oneshot] source_sid={}, cwd={}, remote={:?}",
         source_session_id,
         cwd,
-        claude_bin,
         remote_host.map(|r| &r.name)
     );
 
@@ -406,6 +412,7 @@ pub async fn fork_oneshot(
         ssh_cmd
     } else {
         // Local branch: existing logic
+        let claude_bin = try_resolve_claude_path().ok_or_else(helioncoder_cli_not_found_error)?;
         let mut local_cmd = Command::new(&claude_bin);
         for arg in &claude_args {
             local_cmd.arg(arg);
@@ -552,31 +559,63 @@ fn configured_helioncoder_path() -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn is_explicit_binary_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute() || value.contains('/') || value.contains('\\')
+}
+
+fn is_usable_cli_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    if is_desktop_app_exe(path) {
+        log::warn!(
+            "[claude_stream] ignoring Desktop executable while resolving CLI: {}",
+            path.to_string_lossy()
+        );
+        return false;
+    }
+
+    true
+}
+
+fn normalize_configured_helioncoder_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if is_explicit_binary_path(trimmed) {
+        let candidate = Path::new(trimmed);
+        if is_usable_cli_file(candidate) {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+        log::warn!(
+            "[claude_stream] configured HelionCoder CLI path is not usable: {}",
+            trimmed
+        );
+        return None;
+    }
+
+    which_binary(trimmed)
+}
+
 /// Resolve the full path to the HelionCoder binary.
 /// Cached after first resolution. Use `invalidate_claude_path_cache()` to clear
 /// (e.g. after installing the CLI) so the next call re-scans.
-pub(crate) fn resolve_helioncoder_path() -> String {
+pub(crate) fn try_resolve_helioncoder_path() -> Option<String> {
     let mut cached = HELIONCODER_PATH_CACHE.lock().unwrap();
     if let Some(ref path) = *cached {
-        return path.clone();
+        return Some(path.clone());
     }
-    if let Some(path) = configured_helioncoder_path() {
-        #[cfg(windows)]
-        if is_desktop_app_exe(std::path::Path::new(&path)) {
-            log::warn!(
-                "[claude_stream] ignoring configured Desktop executable while resolving CLI: {}",
-                path
-            );
-        } else {
-            *cached = Some(path.clone());
-            return path;
-        }
-
-        #[cfg(not(windows))]
-        {
-            *cached = Some(path.clone());
-            return path;
-        }
+    if let Some(path) = configured_helioncoder_path()
+        .as_deref()
+        .and_then(normalize_configured_helioncoder_path)
+    {
+        *cached = Some(path.clone());
+        return Some(path);
     }
     let home = crate::storage::home_dir()
         .filter(|h| !h.is_empty())
@@ -633,43 +672,38 @@ pub(crate) fn resolve_helioncoder_path() -> String {
     };
 
     for c in &candidates {
-        if !c.is_file() {
+        if !is_usable_cli_file(c) {
             continue;
         }
         let path_str = c.to_string_lossy().to_string();
-        #[cfg(windows)]
-        if is_desktop_app_exe(c) {
-            log::warn!(
-                "[claude_stream] ignoring Desktop executable while resolving CLI: {}",
-                path_str
-            );
-            continue;
-        }
         log::debug!(
             "[claude_stream] resolved HelionCoder binary (cached): {}",
             path_str
         );
         *cached = Some(path_str.clone());
-        return path_str;
+        return Some(path_str);
     }
     log::debug!(
         "[claude_stream] HelionCoder binary not found in candidates, falling back to PATH lookup"
     );
     // Use which_binary to search augmented PATH for absolute path
-    let fallback = HELION_CLI_ALIASES
+    if let Some(fallback) = HELION_CLI_ALIASES
         .iter()
         .find_map(|name| which_binary(name))
-        .unwrap_or_else(|| HELION_CLI_NAME.to_string());
-    *cached = Some(fallback.clone());
-    fallback
+    {
+        *cached = Some(fallback.clone());
+        return Some(fallback);
+    }
+
+    log::warn!("[claude_stream] HelionCoder CLI not found");
+    None
 }
 
-/// Backwards-compatible name for call sites that still refer to the old module API.
-pub(crate) fn resolve_claude_path() -> String {
-    resolve_helioncoder_path()
+pub(crate) fn try_resolve_claude_path() -> Option<String> {
+    try_resolve_helioncoder_path()
 }
 
-/// Clear the cached HelionCoder binary path so the next `resolve_claude_path()` re-scans.
+/// Clear the cached HelionCoder binary path so the next lookup re-scans.
 pub fn invalidate_claude_path_cache() {
     *HELIONCODER_PATH_CACHE.lock().unwrap() = None;
     log::debug!("[claude_stream] HelionCoder path cache invalidated");

@@ -2213,6 +2213,33 @@
 
   // ── Send message ──
 
+  function openCliSetupWizard() {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("ocv:show-wizard", {
+        detail: { reason: "cli_not_found", cmd: "check_agent_cli" },
+      }),
+    );
+  }
+
+  async function ensureLocalCliAvailable(): Promise<boolean> {
+    try {
+      const result = await api.checkAgentCli("helioncoder");
+      if (result.found) return true;
+      openCliSetupWizard();
+      showChatToast(t("setup_cliNotFound"));
+      return false;
+    } catch (e) {
+      if (api.isCliNotFoundError(e)) {
+        openCliSetupWizard();
+        showChatToast(t("setup_cliNotFound"));
+        return false;
+      }
+      dbgWarn("chat", "CLI availability check failed:", e);
+      return true;
+    }
+  }
+
   async function sendMessage(text: string, attachments: Attachment[]) {
     if (!text.trim()) return;
 
@@ -2308,6 +2335,8 @@
           }
         }
 
+        if (!isRemote && !(await ensureLocalCliAvailable())) return;
+
         // Set indicator AFTER all early-return points
         if (slashCmd) {
           processingSlashCmd = slashCmd;
@@ -2340,6 +2369,12 @@
         requestAnimationFrame(() => promptRef?.focus());
       }
     } catch (e) {
+      if (api.isCliNotFoundError(e)) {
+        store.error = "";
+        processingSlashCmd = null;
+        showChatToast(t("setup_cliNotFound"));
+        return;
+      }
       store.error = String(e);
       processingSlashCmd = null;
     }
@@ -3432,6 +3467,12 @@
 
     // Per-session platform: resume automatically uses run's saved platform_id
     // via backend resolve_auth_env_for_platform() — no mismatch dialog needed.
+    const targetRun = store.run?.id === targetRunId ? store.run : null;
+    if (targetRun && !targetRun.remote_host_name && !(await ensureLocalCliAvailable())) {
+      resuming = false;
+      if (mode === "fork") forkOverlay = null;
+      return;
+    }
 
     // Fork: activate overlay immediately for progress feedback
     if (mode === "fork") {
@@ -3464,6 +3505,12 @@
             try {
               await store.connectSession(resultId);
             } catch (e) {
+              if (api.isCliNotFoundError(e)) {
+                store.error = "";
+                forkOverlay = null;
+                showChatToast(t("setup_cliNotFound"));
+                return;
+              }
               store.error = String(e);
             }
           }
@@ -3483,6 +3530,12 @@
       }
       window.dispatchEvent(new Event("ocv:runs-changed"));
     } catch (e) {
+      if (api.isCliNotFoundError(e)) {
+        store.error = "";
+        forkOverlay = null;
+        showChatToast(t("setup_cliNotFound"));
+        return;
+      }
       // Fork sync failure → show error in overlay instead of error bar
       if (mode === "fork" && forkOverlay) {
         forkOverlay = { ...forkOverlay, error: String(e) };

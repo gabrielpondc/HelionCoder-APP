@@ -403,7 +403,9 @@ pub fn read_skill_content(path: &str, cwd: &str) -> Result<String, String> {
 
 // ── CLI plugin command execution ──
 
-use crate::agent::claude_stream::{augmented_path, resolve_claude_path};
+use crate::agent::claude_stream::{
+    augmented_path, helioncoder_cli_not_found_error, try_resolve_claude_path,
+};
 use crate::process_ext::HideConsole;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
@@ -430,7 +432,7 @@ pub async fn run_plugin_command(
     args: &[&str],
     cwd: Option<&str>,
 ) -> Result<PluginCommandResult, String> {
-    let claude_bin = resolve_claude_path();
+    let claude_bin = try_resolve_claude_path().ok_or_else(helioncoder_cli_not_found_error)?;
     let path_env = augmented_path();
 
     log::debug!(
@@ -457,7 +459,7 @@ pub async fn run_plugin_command(
     cmd.hide_console().kill_on_drop(true);
     let child = cmd.spawn().map_err(|e| {
         log::error!("[plugins] failed to spawn helioncoder: {}", e);
-        format!("Failed to spawn helioncoder: {}", e)
+        format!("Failed to spawn HelionCoder CLI: {}", e)
     })?;
 
     let result = timeout(PLUGIN_CMD_TIMEOUT, child.wait_with_output()).await;

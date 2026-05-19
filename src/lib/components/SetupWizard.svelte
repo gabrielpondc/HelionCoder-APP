@@ -94,13 +94,11 @@
       // CLI not found — show install commands
       step = "cli_not_found";
       await loadInstallMethods();
-      void startCliInstall(true);
     } catch (e) {
       dbgWarn("wizard", "initial check error", e);
       // If check fails, assume CLI not installed
       step = "cli_not_found";
       await loadInstallMethods();
-      void startCliInstall(true);
     }
   }
 
@@ -356,14 +354,12 @@
 
   const UNIX_INSTALL_LATEST =
     "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh";
-  const UNIX_INSTALL_VERSION =
-    `curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh -s -- ${HELION_CLI_VERSION}`;
+  const UNIX_INSTALL_VERSION = `curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh -s -- ${HELION_CLI_VERSION}`;
   const UNIX_UNINSTALL =
     "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/uninstall.sh | sh";
   const WINDOWS_INSTALL_LATEST =
     "iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex";
-  const WINDOWS_INSTALL_VERSION =
-    `$env:HELION_VERSION="${HELION_CLI_VERSION}"; iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex`;
+  const WINDOWS_INSTALL_VERSION = `$env:HELION_VERSION="${HELION_CLI_VERSION}"; iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex`;
   const WINDOWS_UNINSTALL =
     "iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/uninstall.ps1 -UseB | iex";
 
@@ -409,7 +405,7 @@
         <p class="text-sm text-muted-foreground">{t("setup_checking")}</p>
       </div>
     {:else if step === "cli_not_found"}
-      <!-- CLI not found — automatically run the official installer, with manual fallback commands. -->
+      <!-- CLI not found — offer locating an existing binary or running the official installer. -->
       <div class="flex flex-col gap-5">
         <div class="text-center">
           <h2 class="text-xl font-semibold">{t("setup_cliNotFound")}</h2>
@@ -612,14 +608,6 @@
             {:else}
               {t("setup_locateCli")}
             {/if}
-          </button>
-          <button
-            class="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-accent"
-            onclick={() => {
-              step = "api_key_setup";
-            }}
-          >
-            {t("setup_skipCli")}
           </button>
         </div>
 

@@ -2,8 +2,37 @@ import { getTransport } from "./transport";
 import { dbg, dbgWarn, redactSensitive } from "./utils/debug";
 import { perfMarkAsync } from "./utils/perf";
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return String(error);
+}
+
+export function isCliNotFoundError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return (
+    /\bcli_not_found\b/i.test(message) ||
+    /HelionCoder CLI (?:binary )?not found/i.test(message) ||
+    /Failed to spawn (?:claude|helioncoder|HelionCoder CLI): program not found/i.test(message)
+  );
+}
+
+function openSetupWizardForCliError(cmd: string, error: unknown) {
+  if (typeof window === "undefined" || !isCliNotFoundError(error)) return;
+  window.dispatchEvent(
+    new CustomEvent("ocv:show-wizard", {
+      detail: { reason: "cli_not_found", cmd },
+    }),
+  );
+}
+
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return getTransport().invoke<T>(cmd, args);
+  return getTransport()
+    .invoke<T>(cmd, args)
+    .catch((error) => {
+      openSetupWizardForCliError(cmd, error);
+      throw error;
+    });
 }
 import type {
   TaskRun,
