@@ -89,6 +89,8 @@
   let layoutAppUpdateChecking = $state(false);
   let layoutAppUpdating = $state(false);
   let themeMenuOpen = $state(false);
+  let windowsAppMenuOpen = $state(false);
+  let windowsAppMenuActiveGroup = $state("file");
   let profileModalOpen = $state(false);
   let profileNameDraft = $state("");
   let profileSaving = $state(false);
@@ -113,6 +115,9 @@
     isFullscreen: () => Promise<boolean>;
     setFullscreen: (fullscreen: boolean) => Promise<void>;
     toggleMaximize: () => Promise<void>;
+    minimize: () => Promise<void>;
+    close: () => Promise<void>;
+    setDecorations: (decorations: boolean) => Promise<void>;
     setTheme: (theme?: "light" | "dark" | null) => Promise<void>;
     onResized: (handler: () => void) => Promise<() => void>;
     onFocusChanged: (handler: () => void) => Promise<() => void>;
@@ -329,6 +334,240 @@
     } catch (e) {
       layoutAppUpdating = false;
       window.alert(String((e as Error)?.message ?? e));
+    }
+  }
+
+  type WindowsAppMenuItem =
+    | {
+        type?: "item";
+        label: string;
+        command: string;
+        shortcut?: string;
+        disabled?: boolean;
+      }
+    | { type: "separator" };
+
+  type WindowsAppMenuGroup = {
+    id: string;
+    label: string;
+    items: WindowsAppMenuItem[];
+  };
+
+  const windowsAppMenuGroups = $derived.by<WindowsAppMenuGroup[]>(() => {
+    const zh = currentLocale().startsWith("zh");
+    return [
+      {
+        id: "file",
+        label: zh ? "文件" : "File",
+        items: [
+          { label: zh ? "新建聊天" : "New Chat", command: "new-claude", shortcut: "Ctrl+N" },
+          {
+            label: zh ? "打开文件夹..." : "Open Folder...",
+            command: "set-cwd",
+            shortcut: "Ctrl+O",
+          },
+          { type: "separator" },
+          {
+            label: zh ? "导出聊天为 Markdown" : "Export Chat as Markdown",
+            command: "export-chat",
+            shortcut: "Ctrl+Shift+E",
+          },
+          {
+            label: zh ? "导出聊天为 HTML" : "Export Chat as HTML",
+            command: "export-chat-html",
+            shortcut: "Ctrl+Shift+H",
+          },
+        ],
+      },
+      {
+        id: "chat",
+        label: zh ? "聊天" : "Chat",
+        items: [
+          {
+            label: zh ? "切换模型..." : "Switch Model...",
+            command: "switch-model",
+            shortcut: "Ctrl+P",
+          },
+          { label: zh ? "压缩对话" : "Compact Conversation", command: "compact" },
+          { label: zh ? "切换计划模式" : "Toggle Plan Mode", command: "toggle-plan" },
+          { label: zh ? "审查更改" : "Review Changes", command: "review" },
+          { type: "separator" },
+          { label: zh ? "停止运行" : "Stop Run", command: "stop-run" },
+        ],
+      },
+      {
+        id: "tools",
+        label: zh ? "工具" : "Tools",
+        items: [
+          {
+            label: zh ? "查看 Git Diff" : "Git Diff",
+            command: "git-diff",
+            shortcut: "Ctrl+Shift+D",
+          },
+          { label: zh ? "查看 Git 状态" : "Git Status", command: "git-status" },
+          { label: zh ? "查看 Token 用量" : "Token Usage", command: "token-cost" },
+        ],
+      },
+      {
+        id: "navigation",
+        label: zh ? "导航" : "Navigation",
+        items: [
+          { label: zh ? "前往聊天" : "Go to Chat", command: "go-chat" },
+          { label: zh ? "前往记忆" : "Go to Memory", command: "go-memory" },
+          { label: zh ? "前往插件与技能" : "Go to Plugins & Skills", command: "go-plugins" },
+          { label: zh ? "前往用量" : "Go to Usage", command: "go-usage" },
+          { label: zh ? "前往设置" : "Go to Settings", command: "go-settings", shortcut: "Ctrl+," },
+        ],
+      },
+      {
+        id: "settings",
+        label: zh ? "设置" : "Settings",
+        items: [
+          { label: zh ? "设置默认模型" : "Set Default Model", command: "set-model" },
+          { label: zh ? "配置工具" : "Configure Tools", command: "configure-tools" },
+          { label: zh ? "权限" : "Permissions", command: "permissions" },
+        ],
+      },
+      {
+        id: "view",
+        label: zh ? "视图" : "View",
+        items: [
+          {
+            label: zh ? "命令面板..." : "Command Palette...",
+            command: "command-palette",
+            shortcut: "Ctrl+K",
+          },
+          { label: zh ? "切换侧边栏" : "Toggle Sidebar", command: "toggle-sidebar" },
+          { type: "separator" },
+          { label: zh ? "进入/退出全屏" : "Toggle Full Screen", command: "fullscreen" },
+        ],
+      },
+      {
+        id: "window",
+        label: zh ? "窗口" : "Window",
+        items: [
+          { label: zh ? "最小化" : "Minimize", command: "window-minimize" },
+          { label: zh ? "缩放" : "Maximize", command: "window-maximize" },
+          { type: "separator" },
+          { label: zh ? "关闭窗口" : "Close Window", command: "window-close" },
+        ],
+      },
+      {
+        id: "help",
+        label: zh ? "帮助" : "Help",
+        items: [
+          { label: zh ? "运行 Doctor" : "Run Doctor", command: "doctor" },
+          { label: zh ? "版本信息" : "Version Info", command: "version" },
+        ],
+      },
+    ];
+  });
+
+  const windowsAppMenuActiveItems = $derived(
+    windowsAppMenuGroups.find((group) => group.id === windowsAppMenuActiveGroup)?.items ?? [],
+  );
+
+  function toggleWindowsAppMenu() {
+    windowsAppMenuOpen = !windowsAppMenuOpen;
+    if (
+      windowsAppMenuOpen &&
+      !windowsAppMenuGroups.some((group) => group.id === windowsAppMenuActiveGroup)
+    ) {
+      windowsAppMenuActiveGroup = windowsAppMenuGroups[0]?.id ?? "file";
+    }
+  }
+
+  function closeWindowsAppMenu() {
+    windowsAppMenuOpen = false;
+  }
+
+  function emitChatCommand(prompt: string) {
+    window.dispatchEvent(new CustomEvent("ocv:command-send-prompt", { detail: { prompt } }));
+  }
+
+  async function executeWindowsAppMenuCommand(command: string) {
+    closeWindowsAppMenu();
+    switch (command) {
+      case "new-claude":
+        newChat();
+        break;
+      case "set-cwd":
+        await pickFolder(true);
+        break;
+      case "export-chat":
+        window.dispatchEvent(new CustomEvent("ocv:command-export-markdown"));
+        break;
+      case "export-chat-html":
+        window.dispatchEvent(new CustomEvent("ocv:export-html"));
+        break;
+      case "switch-model":
+      case "set-model":
+        await openModelSelectorFromLayout();
+        break;
+      case "compact":
+        emitChatCommand("/compact");
+        break;
+      case "toggle-plan":
+        window.dispatchEvent(new CustomEvent("ocv:command-toggle-plan-mode"));
+        break;
+      case "review":
+        emitChatCommand(
+          "Review my recent changes. Look at the git diff and provide feedback on code quality, potential bugs, and improvements.",
+        );
+        break;
+      case "stop-run":
+        window.dispatchEvent(new CustomEvent("ocv:command-stop-run"));
+        break;
+      case "git-diff":
+      case "git-status":
+        await goto("/explorer");
+        break;
+      case "token-cost":
+        await goto("/usage");
+        break;
+      case "go-chat":
+        await goto("/chat");
+        break;
+      case "go-memory":
+        await goto("/memory");
+        break;
+      case "go-plugins":
+        await goto("/plugins");
+        break;
+      case "go-usage":
+        await goto("/usage");
+        break;
+      case "go-settings":
+      case "configure-tools":
+        await goto("/settings");
+        break;
+      case "permissions":
+        permissionsModalOpen = true;
+        break;
+      case "command-palette":
+        commandPaletteOpen = true;
+        break;
+      case "toggle-sidebar":
+        toggleSidebar();
+        break;
+      case "fullscreen":
+        await toggleFullscreen();
+        break;
+      case "window-minimize":
+        await minimizeWindow();
+        break;
+      case "window-maximize":
+        await toggleWindowMaximizeFromControl();
+        break;
+      case "window-close":
+        await closeWindow();
+        break;
+      case "doctor":
+        commandPaletteOpen = true;
+        break;
+      case "version":
+        showAbout = true;
+        break;
     }
   }
 
@@ -860,6 +1099,12 @@
 
       if (isWindowsDesktop) {
         try {
+          await win.setDecorations(false);
+        } catch (e) {
+          dbgWarn("layout", "disable Windows decorations failed", e);
+        }
+
+        try {
           await win.setEffects({
             effects: ["acrylic"],
             color: effectiveDark ? [12, 12, 14, 118] : [255, 255, 255, 150],
@@ -935,6 +1180,11 @@
   function toggleWindowMaximize(event: MouseEvent) {
     if (!isDesktopApp) return;
     event.preventDefault();
+    void toggleWindowMaximizeFromControl();
+  }
+
+  async function toggleWindowMaximizeFromControl() {
+    if (!isDesktopApp) return;
     getTauriWindowHandle()
       .then(async (win) => {
         if (isWindowFullscreen) {
@@ -945,6 +1195,37 @@
         setTimeout(() => void refreshWindowChromeState(), 160);
       })
       .catch((e) => dbgWarn("layout", "toggle window maximize failed", e));
+  }
+
+  async function toggleFullscreen() {
+    if (!isDesktopApp) return;
+    try {
+      const win = await getTauriWindowHandle();
+      await win.setFullscreen(!isWindowFullscreen);
+      setTimeout(() => void refreshWindowChromeState(), 160);
+    } catch (e) {
+      dbgWarn("layout", "toggle fullscreen failed", e);
+    }
+  }
+
+  async function minimizeWindow() {
+    if (!isDesktopApp) return;
+    try {
+      const win = await getTauriWindowHandle();
+      await win.minimize();
+    } catch (e) {
+      dbgWarn("layout", "minimize window failed", e);
+    }
+  }
+
+  async function closeWindow() {
+    if (!isDesktopApp) return;
+    try {
+      const win = await getTauriWindowHandle();
+      await win.close();
+    } catch (e) {
+      dbgWarn("layout", "close window failed", e);
+    }
   }
 
   // Use onMount for initialization (not $effect - avoids accidental reactive tracking)
@@ -1206,6 +1487,9 @@
     }
 
     function onConversationMenuKeydown(e: KeyboardEvent) {
+      if (windowsAppMenuOpen && e.key === "Escape") {
+        closeWindowsAppMenu();
+      }
       if (e.key === "Escape" && conversationMenu.open) {
         closeConversationMenu();
       }
@@ -1214,7 +1498,20 @@
     function onConversationMenuScroll() {
       if (conversationMenu.open) closeConversationMenu();
     }
+
+    function onWindowsAppMenuPointerDown(e: PointerEvent) {
+      const target = e.target as HTMLElement | null;
+      if (
+        !windowsAppMenuOpen ||
+        target?.closest("[data-windows-app-menu]") ||
+        target?.closest("[data-windows-app-menu-trigger]")
+      ) {
+        return;
+      }
+      closeWindowsAppMenu();
+    }
     document.addEventListener("pointerdown", onConversationMenuPointerDown);
+    document.addEventListener("pointerdown", onWindowsAppMenuPointerDown);
     document.addEventListener("pointerdown", handleWindowDragPointerDown, true);
     document.addEventListener("keydown", onConversationMenuKeydown);
     document.addEventListener("scroll", onConversationMenuScroll, true);
@@ -1308,6 +1605,7 @@
       window.removeEventListener("ocv:memory-file-saved", onMemoryFileSaved);
       window.removeEventListener("ocv:open-permissions", onOpenPermissions);
       document.removeEventListener("pointerdown", onConversationMenuPointerDown);
+      document.removeEventListener("pointerdown", onWindowsAppMenuPointerDown);
       document.removeEventListener("pointerdown", handleWindowDragPointerDown, true);
       document.removeEventListener("keydown", onConversationMenuKeydown);
       document.removeEventListener("scroll", onConversationMenuScroll, true);
@@ -2160,7 +2458,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-{#if isDesktopApp}
+{#if isDesktopApp && !isWindowsDesktop}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="desktop-window-control-strip"
@@ -2171,6 +2469,63 @@
   ></div>
 {/if}
 
+{#if isWindowsDesktop}
+  <div
+    class="titlebar-no-drag fixed right-0 top-0 z-[95] flex h-9 select-none overflow-hidden text-foreground"
+    data-no-window-drag
+    role="group"
+    aria-label="Window controls"
+  >
+    <button
+      type="button"
+      class="flex h-9 w-12 items-center justify-center text-foreground/80 transition-colors hover:bg-foreground/10"
+      onclick={() => void minimizeWindow()}
+      title="Minimize"
+      aria-label="Minimize"
+    >
+      <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3 8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="flex h-9 w-12 items-center justify-center text-foreground/80 transition-colors hover:bg-foreground/10"
+      onclick={() => void toggleWindowMaximizeFromControl()}
+      title="Maximize"
+      aria-label="Maximize"
+    >
+      <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" aria-hidden="true">
+        <rect
+          x="4"
+          y="3.5"
+          width="8"
+          height="8"
+          rx="1"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.3"
+        />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="flex h-9 w-12 items-center justify-center text-foreground/80 transition-colors hover:bg-red-500 hover:text-white"
+      onclick={() => void closeWindow()}
+      title="Close"
+      aria-label="Close"
+    >
+      <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="m4 4 8 8M12 4l-8 8"
+          stroke="currentColor"
+          stroke-width="1.4"
+          stroke-linecap="round"
+        />
+      </svg>
+    </button>
+  </div>
+{/if}
+
 <div
   class="app-shell relative flex h-screen gap-0 overflow-hidden {isGlassDesktop
     ? 'bg-transparent'
@@ -2179,201 +2534,60 @@
   <!-- Claude Code-style single sidebar panel -->
   <aside
     class="relative z-10 flex shrink-0 overflow-hidden border-r border-sidebar-border text-sidebar-foreground transition-[width,opacity,transform] duration-200 ease-out {isGlassDesktop
-        ? 'desktop-sidebar-glass'
-        : 'bg-sidebar'} {sidebarOpen ? 'opacity-100' : 'pointer-events-none -translate-x-2 opacity-0'}"
+      ? 'desktop-sidebar-glass'
+      : 'bg-sidebar'} {sidebarOpen
+      ? 'opacity-100'
+      : 'pointer-events-none -translate-x-2 opacity-0'}"
     style:width="{sidebarOpen ? sidebarWidth : 0}px"
     aria-hidden={!sidebarOpen}
   >
-      <!-- A. Icon Rail -->
-      <div class="hidden w-[42px] flex-col items-center border-r border-sidebar-border bg-sidebar">
-        <!-- Rail logo (OC) -->
-        <div class="flex h-12 w-full items-center justify-center border-b border-sidebar-border">
-          <img src="/logo.png?v=2" alt="HelionCoder" class="h-7 w-7 rounded-md" />
-        </div>
+    <!-- A. Icon Rail -->
+    <div class="hidden w-[42px] flex-col items-center border-r border-sidebar-border bg-sidebar">
+      <!-- Rail logo (OC) -->
+      <div class="flex h-12 w-full items-center justify-center border-b border-sidebar-border">
+        <img src="/logo.png?v=2" alt="HelionCoder" class="h-7 w-7 rounded-md" />
+      </div>
 
-        <!-- Rail nav icons -->
-        <nav class="flex flex-1 flex-col items-center gap-1 py-2">
-          {#each navItems as item}
-            {@const isActive = currentPath.startsWith(item.path)}
-            <a
-              href={item.path}
-              class="relative flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-150 no-underline
+      <!-- Rail nav icons -->
+      <nav class="flex flex-1 flex-col items-center gap-1 py-2">
+        {#each navItems as item}
+          {@const isActive = currentPath.startsWith(item.path)}
+          <a
+            href={item.path}
+            class="relative flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-150 no-underline
                 {isActive
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                : 'hover:bg-sidebar-accent/50 text-sidebar-foreground'}"
-              title={item.label()}
-            >
-              <!-- Active indicator bar -->
-              {#if isActive}
-                <span class="absolute left-0 top-1.5 h-5 w-[2px] rounded-r-full bg-primary"></span>
-              {/if}
-              {#if item.icon === "message"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg
-                >
-              {:else if item.icon === "folder"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  ><path
-                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                  /></svg
-                >
-              {:else if item.icon === "zap"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  ><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg
-                >
-              {:else if item.icon === "book"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  ><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /></svg
-                >
-              {:else if item.icon === "chart"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg
-                >
-              {:else if item.icon === "clock"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  ><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg
-                >
-              {:else if item.icon === "settings"}
-                <svg
-                  class="h-[18px] w-[18px]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  ><path
-                    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                  /><circle cx="12" cy="12" r="3" /></svg
-                >
-              {/if}
-              <span class="sr-only">{item.label()}</span>
-            </a>
-          {/each}
-        </nav>
-
-        <!-- Rail version + locale + dark mode toggle -->
-        <div class="border-t border-sidebar-border py-2">
-          <div class="flex items-center justify-center pb-1">
-            <button
-              class="text-xs text-muted-foreground hover:text-muted-foreground transition-colors cursor-pointer"
-              onclick={() => (showAbout = true)}
-              title="About HelionCoder">v0.5.0</button
-            >
-          </div>
-          <div class="relative mx-auto mb-0.5">
-            <button
-              class="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors duration-150"
-              onclick={() => (localePopupOpen = !localePopupOpen)}
-              title={currentLocale()}
-            >
-              <span class="text-xs font-medium"
-                >{getEntry(currentLocale())?.shortLabel ?? currentLocale()}</span
-              >
-            </button>
-            {#if localePopupOpen}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                class="fixed inset-0 z-40"
-                onclick={() => (localePopupOpen = false)}
-                onkeydown={(e) => e.key === "Escape" && (localePopupOpen = false)}
-              ></div>
-              <div
-                class="absolute bottom-0 left-full ml-1 z-50 min-w-[140px] rounded-md border border-sidebar-border bg-popover py-1 shadow-lg"
-              >
-                {#each LOCALE_REGISTRY as entry}
-                  <button
-                    class="flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors
-                      {currentLocale() === entry.code
-                      ? 'bg-accent text-accent-foreground'
-                      : 'text-popover-foreground hover:bg-accent/50'}"
-                    onclick={() => handleLocaleSelect(entry.code)}
-                  >
-                    <span class="w-5 text-center font-medium">{entry.shortLabel}</span>
-                    <span>{entry.nativeName}</span>
-                    {#if (entry.status as string) === "beta"}
-                      <span
-                        class="ml-auto text-[10px] text-muted-foreground/60 border border-muted-foreground/20 rounded px-1"
-                        >Beta</span
-                      >
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          <button
-            class="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors duration-150"
-            onclick={cycleTheme}
-            title={themeMode === "dark"
-              ? t("layout_themeTitle_dark")
-              : themeMode === "light"
-                ? t("layout_themeTitle_light")
-                : t("layout_themeTitle_system")}
+              ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+              : 'hover:bg-sidebar-accent/50 text-sidebar-foreground'}"
+            title={item.label()}
           >
-            {#if themeMode === "dark"}
-              <!-- Moon icon (dark mode active) -->
-              <svg
-                class="h-[18px] w-[18px]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg
-              >
-            {:else if themeMode === "light"}
-              <!-- Sun icon (light mode active) -->
+            <!-- Active indicator bar -->
+            {#if isActive}
+              <span class="absolute left-0 top-1.5 h-5 w-[2px] rounded-r-full bg-primary"></span>
+            {/if}
+            {#if item.icon === "message"}
               <svg
                 class="h-[18px] w-[18px]"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="2"
-                ><circle cx="12" cy="12" r="4" /><path
-                  d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+                stroke-linecap="round"
+                stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg
+              >
+            {:else if item.icon === "folder"}
+              <svg
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path
+                  d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
                 /></svg
               >
-            {:else}
-              <!-- Monitor icon (system mode active) -->
+            {:else if item.icon === "zap"}
               <svg
                 class="h-[18px] w-[18px]"
                 viewBox="0 0 24 24"
@@ -2382,23 +2596,141 @@
                 stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                ><rect width="20" height="14" x="2" y="3" rx="2" /><line
-                  x1="8"
-                  x2="16"
-                  y1="21"
-                  y2="21"
-                /><line x1="12" x2="12" y1="17" y2="21" /></svg
+                ><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg
+              >
+            {:else if item.icon === "book"}
+              <svg
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /></svg
+              >
+            {:else if item.icon === "chart"}
+              <svg
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg
+              >
+            {:else if item.icon === "clock"}
+              <svg
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg
+              >
+            {:else if item.icon === "settings"}
+              <svg
+                class="h-[18px] w-[18px]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path
+                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+                /><circle cx="12" cy="12" r="3" /></svg
               >
             {/if}
-          </button>
+            <span class="sr-only">{item.label()}</span>
+          </a>
+        {/each}
+      </nav>
+
+      <!-- Rail version + locale + dark mode toggle -->
+      <div class="border-t border-sidebar-border py-2">
+        <div class="flex items-center justify-center pb-1">
+          <button
+            class="text-xs text-muted-foreground hover:text-muted-foreground transition-colors cursor-pointer"
+            onclick={() => (showAbout = true)}
+            title="About HelionCoder">v0.5.0</button
+          >
+        </div>
+        <div class="relative mx-auto mb-0.5">
           <button
             class="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors duration-150"
-            onclick={cycleScheme}
-            title={colorScheme === "warm"
-              ? t("layout_schemeTitle_warm")
-              : t("layout_schemeTitle_neutral")}
+            onclick={() => (localePopupOpen = !localePopupOpen)}
+            title={currentLocale()}
           >
-            <!-- Palette icon -->
+            <span class="text-xs font-medium"
+              >{getEntry(currentLocale())?.shortLabel ?? currentLocale()}</span
+            >
+          </button>
+          {#if localePopupOpen}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="fixed inset-0 z-40"
+              onclick={() => (localePopupOpen = false)}
+              onkeydown={(e) => e.key === "Escape" && (localePopupOpen = false)}
+            ></div>
+            <div
+              class="absolute bottom-0 left-full ml-1 z-50 min-w-[140px] rounded-md border border-sidebar-border bg-popover py-1 shadow-lg"
+            >
+              {#each LOCALE_REGISTRY as entry}
+                <button
+                  class="flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors
+                      {currentLocale() === entry.code
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-popover-foreground hover:bg-accent/50'}"
+                  onclick={() => handleLocaleSelect(entry.code)}
+                >
+                  <span class="w-5 text-center font-medium">{entry.shortLabel}</span>
+                  <span>{entry.nativeName}</span>
+                  {#if (entry.status as string) === "beta"}
+                    <span
+                      class="ml-auto text-[10px] text-muted-foreground/60 border border-muted-foreground/20 rounded px-1"
+                      >Beta</span
+                    >
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <button
+          class="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors duration-150"
+          onclick={cycleTheme}
+          title={themeMode === "dark"
+            ? t("layout_themeTitle_dark")
+            : themeMode === "light"
+              ? t("layout_themeTitle_light")
+              : t("layout_themeTitle_system")}
+        >
+          {#if themeMode === "dark"}
+            <!-- Moon icon (dark mode active) -->
+            <svg
+              class="h-[18px] w-[18px]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg
+            >
+          {:else if themeMode === "light"}
+            <!-- Sun icon (light mode active) -->
+            <svg
+              class="h-[18px] w-[18px]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              ><circle cx="12" cy="12" r="4" /><path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              /></svg
+            >
+          {:else}
+            <!-- Monitor icon (system mode active) -->
             <svg
               class="h-[18px] w-[18px]"
               viewBox="0 0 24 24"
@@ -2407,461 +2739,570 @@
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
-              ><circle cx="13.5" cy="6.5" r=".5" fill="currentColor" /><circle
-                cx="17.5"
-                cy="10.5"
-                r=".5"
-                fill="currentColor"
-              /><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" /><circle
-                cx="6.5"
-                cy="12"
-                r=".5"
-                fill="currentColor"
-              /><path
-                d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"
-              /></svg
+              ><rect width="20" height="14" x="2" y="3" rx="2" /><line
+                x1="8"
+                x2="16"
+                y1="21"
+                y2="21"
+              /><line x1="12" x2="12" y1="17" y2="21" /></svg
+            >
+          {/if}
+        </button>
+        <button
+          class="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors duration-150"
+          onclick={cycleScheme}
+          title={colorScheme === "warm"
+            ? t("layout_schemeTitle_warm")
+            : t("layout_schemeTitle_neutral")}
+        >
+          <!-- Palette icon -->
+          <svg
+            class="h-[18px] w-[18px]"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><circle cx="13.5" cy="6.5" r=".5" fill="currentColor" /><circle
+              cx="17.5"
+              cy="10.5"
+              r=".5"
+              fill="currentColor"
+            /><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" /><circle
+              cx="6.5"
+              cy="12"
+              r=".5"
+              fill="currentColor"
+            /><path
+              d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"
+            /></svg
+          >
+        </button>
+      </div>
+    </div>
+
+    <!-- B. Content Panel -->
+    <div class="relative flex flex-none flex-col overflow-hidden" style:width="{sidebarWidth}px">
+      <!-- Top chrome: menu / sidebar / search, matching Claude Code's compact rail. -->
+      <div
+        class="titlebar-drag flex h-12 items-center gap-1.5 {reserveMacTrafficLights
+          ? 'pl-[92px] pr-3'
+          : 'px-3'}"
+        data-tauri-drag-region
+      >
+        <div
+          class="flex items-center gap-1.5 {reserveMacTrafficLights
+            ? 'mac-titlebar-control-strip'
+            : ''}"
+        >
+          {#if isWindowsDesktop || !isDesktopApp}
+            <button
+              data-windows-app-menu-trigger={isWindowsDesktop ? true : undefined}
+              class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
+              onclick={() => {
+                if (isWindowsDesktop) toggleWindowsAppMenu();
+                else commandPaletteOpen = true;
+              }}
+              title={isWindowsDesktop ? "Menu" : "Command Palette"}
+              aria-label={isWindowsDesktop ? "Menu" : "Command Palette"}
+              aria-expanded={isWindowsDesktop ? windowsAppMenuOpen : undefined}
+            >
+              <svg
+                class="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg
+              >
+            </button>
+          {/if}
+          <button
+            class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
+            onclick={toggleSidebar}
+            title={t("layout_toggleSidebar")}
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><rect width="16" height="14" x="4" y="5" rx="2" /><path d="M10 5v14" /></svg
             >
           </button>
-        </div>
-      </div>
-
-      <!-- B. Content Panel -->
-      <div class="relative flex flex-none flex-col overflow-hidden" style:width="{sidebarWidth}px">
-        <!-- Top chrome: menu / sidebar / search, matching Claude Code's compact rail. -->
-        <div
-          class="titlebar-drag flex h-12 items-center gap-1.5 {reserveMacTrafficLights
-            ? 'pl-[92px] pr-3'
-            : 'px-3'}"
-          data-tauri-drag-region
-        >
-          <div class="flex items-center gap-1.5 {reserveMacTrafficLights ? 'mac-titlebar-control-strip' : ''}">
-            {#if !isDesktopApp}
-              <button
-                class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
-                onclick={() => (commandPaletteOpen = true)}
-                title="Menu"
-              >
+          <button
+            class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
+            onclick={() => {
+              searchPanelOpen = !searchPanelOpen;
+              if (!searchPanelOpen) runSearchQuery = "";
+            }}
+            title={t("sidebar_searchChats")}
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg
+            >
+          </button>
+          {#if layoutAppUpdateAvailable}
+            <button
+              type="button"
+              class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-sidebar-accent/60 hover:text-primary disabled:pointer-events-none disabled:opacity-60"
+              onclick={() => void handleLayoutAppUpdate()}
+              disabled={layoutAppUpdating}
+              title={t("infoPanel_updateApp")}
+              aria-label={t("infoPanel_updateApp")}
+            >
+              {#if layoutAppUpdating}
                 <svg
-                  class="h-4 w-4"
+                  class="h-4 w-4 animate-spin"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="2"><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36" /></svg
                 >
-              </button>
-            {/if}
-            <button
-              class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
-              onclick={toggleSidebar}
-              title={t("layout_toggleSidebar")}
-            >
-              <svg
-                class="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><rect width="16" height="14" x="4" y="5" rx="2" /><path d="M10 5v14" /></svg
-              >
-            </button>
-            <button
-              class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
-              onclick={() => {
-                searchPanelOpen = !searchPanelOpen;
-                if (!searchPanelOpen) runSearchQuery = "";
-              }}
-              title={t("sidebar_searchChats")}
-            >
-              <svg
-                class="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg
-              >
-            </button>
-            {#if layoutAppUpdateAvailable}
-              <button
-                type="button"
-                class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-sidebar-accent/60 hover:text-primary disabled:pointer-events-none disabled:opacity-60"
-                onclick={() => void handleLayoutAppUpdate()}
-                disabled={layoutAppUpdating}
-                title={t("infoPanel_updateApp")}
-                aria-label={t("infoPanel_updateApp")}
-              >
-                {#if layoutAppUpdating}
-                  <svg
-                    class="h-4 w-4 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><path d="M21 12a9 9 0 1 1-2.64-6.36" /></svg
-                  >
-                {:else}
-                  <svg
-                    class="h-4 w-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg
-                  >
-                {/if}
-              </button>
-            {/if}
-          </div>
-        </div>
-
-        <div class="px-2 pb-2">
-          <div class="grid grid-cols-3 gap-1 rounded-lg bg-sidebar-accent/30 p-1">
-            {#each appModeItems as mode}
-              <button
-                type="button"
-                class="flex h-8 items-center justify-center gap-1 rounded-md text-[12px] font-medium transition-colors
-                  {appMode === mode.id
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
-                onclick={() => selectAppMode(mode.id)}
-                title={mode.title()}
-                aria-label={mode.label()}
-              >
-                {#if mode.id === "chat"}
-                  <svg
-                    class="h-3.5 w-3.5 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg
-                  >
-                {:else if mode.id === "cowork"}
-                  <svg
-                    class="h-3.5 w-3.5 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><path d="m9 11 3 3L22 4" /><path
-                      d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"
-                    /></svg
-                  >
-                {:else}
-                  <svg
-                    class="h-3.5 w-3.5 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"><path d="m8 9-4 3 4 3" /><path d="m16 9 4 3-4 3" /></svg
-                  >
-                {/if}
-                {#if appMode === mode.id}
-                  <span class="min-w-0 truncate">{mode.label()}</span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        {#if isExplorerPage}
-          <!-- Explorer tab bar: Files / Git -->
-          <div class="flex shrink-0 border-b border-sidebar-border">
-            <button
-              class="flex-1 py-1.5 text-xs font-medium text-center transition-colors
-              {explorerTab === 'files'
-                ? 'text-sidebar-foreground border-b-2 border-primary'
-                : 'text-muted-foreground hover:text-sidebar-foreground'}"
-              onclick={() => (explorerTab = "files")}>{t("sidebar_files")}</button
-            >
-            <button
-              class="relative flex-1 py-1.5 text-xs font-medium text-center transition-colors
-              {explorerTab === 'git'
-                ? 'text-sidebar-foreground border-b-2 border-primary'
-                : 'text-muted-foreground hover:text-sidebar-foreground'}"
-              onclick={() => (explorerTab = "git")}
-              >{t("sidebar_git")}
-              {#if gitSummary && gitSummary.total_files > 0}
-                <span
-                  class="ml-0.5 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-500/80 px-1 text-[10px] font-bold text-white"
-                  >{gitSummary.total_files}</span
-                >
-              {/if}
-            </button>
-          </div>
-
-          <!-- Compact project picker (below tabs) -->
-          <div class="relative shrink-0 border-b border-sidebar-border">
-            <button
-              class="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors hover:bg-sidebar-accent/50"
-              onclick={() => (explorerProjectOpen = !explorerProjectOpen)}
-            >
-              <svg
-                class="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-                /></svg
-              >
-              <span class="min-w-0 truncate text-sidebar-foreground"
-                >{projectCwd ? cwdDisplayLabel(projectCwd) : t("sidebar_selectProjectBrowse")}</span
-              >
-              <svg
-                class="ml-auto h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform {explorerProjectOpen
-                  ? 'rotate-180'
-                  : ''}"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg
-              >
-            </button>
-            {#if explorerProjectOpen}
-              <div class="border-b border-sidebar-border bg-sidebar">
-                {#each selectableFolders as folder (folder.folderKey)}
-                  <button
-                    class="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors
-                      {folder.cwd === projectCwd
-                      ? 'bg-sidebar-accent text-sidebar-foreground'
-                      : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
-                    onclick={() => {
-                      projectCwd = folder.cwd;
-                      explorerProjectOpen = false;
-                    }}
-                  >
-                    <svg
-                      class="h-3 w-3 shrink-0 text-muted-foreground/70"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      ><path
-                        d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-                      /></svg
-                    >
-                    <span class="min-w-0 truncate">{cwdDisplayLabel(folder.cwd)}</span>
-                  </button>
-                {/each}
-                <button
-                  class="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
-                  onclick={() => {
-                    pickFolder(false);
-                    explorerProjectOpen = false;
-                  }}
-                >
-                  <svg
-                    class="h-3 w-3 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
-                  >
-                  <span>{t("project_openFolder")}</span>
-                </button>
-              </div>
-            {/if}
-          </div>
-
-          <!-- Explorer tab content -->
-          {#if explorerTab === "files"}
-            <div class="flex-1 overflow-y-auto px-1 py-1">
-              {#if !projectCwd}
-                {@const lastRemote = getLastTarget()}
-                <div class="flex items-center justify-center px-3 py-12">
-                  <p class="text-xs text-muted-foreground text-center">
-                    {lastRemote
-                      ? t("layout_remoteFileTreeUnavailable")
-                      : t("sidebar_selectProjectBrowse")}
-                  </p>
-                </div>
-              {:else if treeLoading}
-                <div class="flex items-center justify-center py-12">
-                  <div
-                    class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
-                  ></div>
-                </div>
-              {:else if fileTree.length === 0}
-                <p class="px-2 py-8 text-xs text-muted-foreground text-center">
-                  {t("sidebar_emptyDirectory")}
-                </p>
               {:else}
-                {@render treeNodes(fileTree)}
-              {/if}
-            </div>
-          {:else}
-            <!-- Git tab -->
-            {#if !projectCwd}
-              <div class="flex-1 flex items-center justify-center px-3">
-                <p class="text-xs text-muted-foreground text-center">
-                  {t("sidebar_selectProjectGit")}
-                </p>
-              </div>
-            {:else if gitLoading}
-              <div class="flex-1 flex items-center justify-center">
-                <div
-                  class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
-                ></div>
-              </div>
-            {:else if !gitSummary}
-              <div class="flex-1 flex items-center justify-center px-3">
-                <p class="text-xs text-muted-foreground text-center">{t("sidebar_notGitRepo")}</p>
-              </div>
-            {:else}
-              <!-- Branch info -->
-              <div
-                class="flex items-center gap-1.5 px-3 py-2 border-b border-sidebar-border shrink-0"
-              >
                 <svg
-                  class="h-3 w-3 shrink-0 text-muted-foreground"
+                  class="h-4 w-4"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
                   stroke-width="2"
                   stroke-linecap="round"
                   stroke-linejoin="round"
-                  ><circle cx="12" cy="12" r="3" /><line x1="3" x2="9" y1="12" y2="12" /><line
-                    x1="15"
-                    x2="21"
-                    y1="12"
-                    y2="12"
+                  ><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg
+                >
+              {/if}
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      <div class="px-2 pb-2">
+        <div class="grid grid-cols-3 gap-1 rounded-lg bg-sidebar-accent/30 p-1">
+          {#each appModeItems as mode}
+            <button
+              type="button"
+              class="flex h-8 items-center justify-center gap-1 rounded-md text-[12px] font-medium transition-colors
+                  {appMode === mode.id
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
+              onclick={() => selectAppMode(mode.id)}
+              title={mode.title()}
+              aria-label={mode.label()}
+            >
+              {#if mode.id === "chat"}
+                <svg
+                  class="h-3.5 w-3.5 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg
+                >
+              {:else if mode.id === "cowork"}
+                <svg
+                  class="h-3.5 w-3.5 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><path d="m9 11 3 3L22 4" /><path
+                    d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"
                   /></svg
                 >
-                <span class="text-[12px] font-medium text-sidebar-foreground min-w-0 truncate"
-                  >{gitSummary.branch || t("sidebar_detached")}</span
+              {:else}
+                <svg
+                  class="h-3.5 w-3.5 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"><path d="m8 9-4 3 4 3" /><path d="m16 9 4 3-4 3" /></svg
                 >
+              {/if}
+              {#if appMode === mode.id}
+                <span class="min-w-0 truncate">{mode.label()}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      {#if isExplorerPage}
+        <!-- Explorer tab bar: Files / Git -->
+        <div class="flex shrink-0 border-b border-sidebar-border">
+          <button
+            class="flex-1 py-1.5 text-xs font-medium text-center transition-colors
+              {explorerTab === 'files'
+              ? 'text-sidebar-foreground border-b-2 border-primary'
+              : 'text-muted-foreground hover:text-sidebar-foreground'}"
+            onclick={() => (explorerTab = "files")}>{t("sidebar_files")}</button
+          >
+          <button
+            class="relative flex-1 py-1.5 text-xs font-medium text-center transition-colors
+              {explorerTab === 'git'
+              ? 'text-sidebar-foreground border-b-2 border-primary'
+              : 'text-muted-foreground hover:text-sidebar-foreground'}"
+            onclick={() => (explorerTab = "git")}
+            >{t("sidebar_git")}
+            {#if gitSummary && gitSummary.total_files > 0}
+              <span
+                class="ml-0.5 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-500/80 px-1 text-[10px] font-bold text-white"
+                >{gitSummary.total_files}</span
+              >
+            {/if}
+          </button>
+        </div>
+
+        <!-- Compact project picker (below tabs) -->
+        <div class="relative shrink-0 border-b border-sidebar-border">
+          <button
+            class="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors hover:bg-sidebar-accent/50"
+            onclick={() => (explorerProjectOpen = !explorerProjectOpen)}
+          >
+            <svg
+              class="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><path
+                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+              /></svg
+            >
+            <span class="min-w-0 truncate text-sidebar-foreground"
+              >{projectCwd ? cwdDisplayLabel(projectCwd) : t("sidebar_selectProjectBrowse")}</span
+            >
+            <svg
+              class="ml-auto h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform {explorerProjectOpen
+                ? 'rotate-180'
+                : ''}"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg
+            >
+          </button>
+          {#if explorerProjectOpen}
+            <div class="border-b border-sidebar-border bg-sidebar">
+              {#each selectableFolders as folder (folder.folderKey)}
                 <button
-                  class="ml-auto flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
-                  onclick={loadGitSummary}
-                  title={t("sidebar_refresh")}
+                  class="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors
+                      {folder.cwd === projectCwd
+                    ? 'bg-sidebar-accent text-sidebar-foreground'
+                    : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
+                  onclick={() => {
+                    projectCwd = folder.cwd;
+                    explorerProjectOpen = false;
+                  }}
                 >
                   <svg
-                    class="h-3 w-3"
+                    class="h-3 w-3 shrink-0 text-muted-foreground/70"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"
                     stroke-linecap="round"
                     stroke-linejoin="round"
-                    ><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path
-                      d="M3 3v5h5"
-                    /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path
-                      d="M16 16h5v5"
+                    ><path
+                      d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
                     /></svg
                   >
+                  <span class="min-w-0 truncate">{cwdDisplayLabel(folder.cwd)}</span>
                 </button>
-              </div>
-              <!-- Summary -->
-              {#if gitSummary.total_files > 0}
-                <div
-                  class="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground border-b border-sidebar-border shrink-0"
+              {/each}
+              <button
+                class="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
+                onclick={() => {
+                  pickFolder(false);
+                  explorerProjectOpen = false;
+                }}
+              >
+                <svg
+                  class="h-3 w-3 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
                 >
-                  <span class="tabular-nums"
-                    >{gitSummary.total_files !== 1
-                      ? t("sidebar_changedFiles", { count: String(gitSummary.total_files) })
-                      : t("sidebar_changedFile", { count: String(gitSummary.total_files) })}</span
+                <span>{t("project_openFolder")}</span>
+              </button>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Explorer tab content -->
+        {#if explorerTab === "files"}
+          <div class="flex-1 overflow-y-auto px-1 py-1">
+            {#if !projectCwd}
+              {@const lastRemote = getLastTarget()}
+              <div class="flex items-center justify-center px-3 py-12">
+                <p class="text-xs text-muted-foreground text-center">
+                  {lastRemote
+                    ? t("layout_remoteFileTreeUnavailable")
+                    : t("sidebar_selectProjectBrowse")}
+                </p>
+              </div>
+            {:else if treeLoading}
+              <div class="flex items-center justify-center py-12">
+                <div
+                  class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
+                ></div>
+              </div>
+            {:else if fileTree.length === 0}
+              <p class="px-2 py-8 text-xs text-muted-foreground text-center">
+                {t("sidebar_emptyDirectory")}
+              </p>
+            {:else}
+              {@render treeNodes(fileTree)}
+            {/if}
+          </div>
+        {:else}
+          <!-- Git tab -->
+          {#if !projectCwd}
+            <div class="flex-1 flex items-center justify-center px-3">
+              <p class="text-xs text-muted-foreground text-center">
+                {t("sidebar_selectProjectGit")}
+              </p>
+            </div>
+          {:else if gitLoading}
+            <div class="flex-1 flex items-center justify-center">
+              <div
+                class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
+              ></div>
+            </div>
+          {:else if !gitSummary}
+            <div class="flex-1 flex items-center justify-center px-3">
+              <p class="text-xs text-muted-foreground text-center">{t("sidebar_notGitRepo")}</p>
+            </div>
+          {:else}
+            <!-- Branch info -->
+            <div
+              class="flex items-center gap-1.5 px-3 py-2 border-b border-sidebar-border shrink-0"
+            >
+              <svg
+                class="h-3 w-3 shrink-0 text-muted-foreground"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><circle cx="12" cy="12" r="3" /><line x1="3" x2="9" y1="12" y2="12" /><line
+                  x1="15"
+                  x2="21"
+                  y1="12"
+                  y2="12"
+                /></svg
+              >
+              <span class="text-[12px] font-medium text-sidebar-foreground min-w-0 truncate"
+                >{gitSummary.branch || t("sidebar_detached")}</span
+              >
+              <button
+                class="ml-auto flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
+                onclick={loadGitSummary}
+                title={t("sidebar_refresh")}
+              >
+                <svg
+                  class="h-3 w-3"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path
+                    d="M3 3v5h5"
+                  /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path
+                    d="M16 16h5v5"
+                  /></svg
+                >
+              </button>
+            </div>
+            <!-- Summary -->
+            {#if gitSummary.total_files > 0}
+              <div
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground border-b border-sidebar-border shrink-0"
+              >
+                <span class="tabular-nums"
+                  >{gitSummary.total_files !== 1
+                    ? t("sidebar_changedFiles", { count: String(gitSummary.total_files) })
+                    : t("sidebar_changedFile", { count: String(gitSummary.total_files) })}</span
+                >
+                {#if gitSummary.total_insertions > 0}
+                  <span class="text-green-500 tabular-nums">+{gitSummary.total_insertions}</span>
+                {/if}
+                {#if gitSummary.total_deletions > 0}
+                  <span class="text-red-400 tabular-nums">-{gitSummary.total_deletions}</span>
+                {/if}
+              </div>
+              <!-- Changed files list -->
+              <div class="flex-1 overflow-y-auto">
+                {#each gitSummary.files as file}
+                  <button
+                    class="flex w-full items-center gap-1.5 px-3 py-1 text-[12px] hover:bg-sidebar-accent/50 transition-colors"
+                    onclick={() => selectDiffFile(file.path)}
                   >
-                  {#if gitSummary.total_insertions > 0}
-                    <span class="text-green-500 tabular-nums">+{gitSummary.total_insertions}</span>
-                  {/if}
-                  {#if gitSummary.total_deletions > 0}
-                    <span class="text-red-400 tabular-nums">-{gitSummary.total_deletions}</span>
-                  {/if}
-                </div>
-                <!-- Changed files list -->
-                <div class="flex-1 overflow-y-auto">
-                  {#each gitSummary.files as file}
-                    <button
-                      class="flex w-full items-center gap-1.5 px-3 py-1 text-[12px] hover:bg-sidebar-accent/50 transition-colors"
-                      onclick={() => selectDiffFile(file.path)}
+                    <span
+                      class="w-3 shrink-0 text-center font-mono text-[10px] font-bold {GIT_STATUS_COLORS[
+                        file.status
+                      ] ?? 'text-muted-foreground'}">{file.status}</span
                     >
-                      <span
-                        class="w-3 shrink-0 text-center font-mono text-[10px] font-bold {GIT_STATUS_COLORS[
-                          file.status
-                        ] ?? 'text-muted-foreground'}">{file.status}</span
-                      >
-                      <span class="flex-1 min-w-0 truncate text-sidebar-foreground text-left"
-                        >{file.path}</span
-                      >
-                      {#if file.insertions > 0}
-                        <span class="text-[10px] text-green-500">+{file.insertions}</span>
-                      {/if}
-                      {#if file.deletions > 0}
-                        <span class="text-[10px] text-red-400">-{file.deletions}</span>
-                      {/if}
-                    </button>
-                  {/each}
+                    <span class="flex-1 min-w-0 truncate text-sidebar-foreground text-left"
+                      >{file.path}</span
+                    >
+                    {#if file.insertions > 0}
+                      <span class="text-[10px] text-green-500">+{file.insertions}</span>
+                    {/if}
+                    {#if file.deletions > 0}
+                      <span class="text-[10px] text-red-400">-{file.deletions}</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <div class="flex-1 flex items-center justify-center px-3">
+                <div class="flex flex-col items-center gap-1.5 text-center">
+                  <svg
+                    class="h-6 w-6 text-muted-foreground/30"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"><path d="M20 6 9 17l-5-5" /></svg
+                  >
+                  <p class="text-xs text-muted-foreground">{t("sidebar_workingTreeClean")}</p>
                 </div>
-              {:else}
-                <div class="flex-1 flex items-center justify-center px-3">
-                  <div class="flex flex-col items-center gap-1.5 text-center">
+              </div>
+            {/if}
+          {/if}
+        {/if}
+      {:else if isMemoryPage}
+        <!-- Memory file tree -->
+        <div class="flex-1 overflow-y-auto py-1">
+          <!-- Project folders (accordion: only one expanded at a time) -->
+          {#each selectableFolders as folder (folder.folderKey)}
+            <ProjectFolderItem
+              {folder}
+              label={cwdDisplayLabel(folder.cwd)}
+              expanded={folder.cwd === projectCwd}
+              onToggle={() => {
+                projectCwd = projectCwd === folder.cwd ? "" : folder.cwd;
+              }}
+            >
+              {#if memoryLoading}
+                <div class="flex items-center justify-center py-6">
+                  <div
+                    class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
+                  ></div>
+                </div>
+              {:else if memoryScopeFolder.length > 0}
+                {#each filterVisibleCandidates(memoryScopeFolder, true, memorySelectedFile) as file}
+                  <button
+                    class="flex w-full items-center gap-1.5 py-1 pl-4 pr-3 text-xs transition-colors
+                        {memorySelectedFile === file.path
+                      ? 'bg-sidebar-accent text-sidebar-foreground'
+                      : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
+                    onclick={() => selectMemoryFile(file)}
+                    title={file.path}
+                  >
                     <svg
-                      class="h-6 w-6 text-muted-foreground/30"
+                      class="h-3 w-3 shrink-0 {file.scope === 'memory'
+                        ? 'text-amber-400'
+                        : file.exists
+                          ? 'text-blue-400'
+                          : 'text-muted-foreground/40'}"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
-                      stroke-width="1.5"><path d="M20 6 9 17l-5-5" /></svg
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      ><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path
+                        d="M14 2v4a2 2 0 0 0 2 2h4"
+                      /></svg
                     >
-                    <p class="text-xs text-muted-foreground">{t("sidebar_workingTreeClean")}</p>
-                  </div>
-                </div>
+                    <span class="min-w-0 truncate">{file.label}</span>
+                    {#if !file.exists}
+                      <span class="ml-auto text-[10px] text-muted-foreground shrink-0"
+                        >{t("memory_new")}</span
+                      >
+                    {/if}
+                  </button>
+                {/each}
+              {:else}
+                <p class="px-2 py-3 text-xs text-muted-foreground">
+                  {t("memory_noProjectFiles")}
+                </p>
               {/if}
-            {/if}
-          {/if}
-        {:else if isMemoryPage}
-          <!-- Memory file tree -->
-          <div class="flex-1 overflow-y-auto py-1">
-            <!-- Project folders (accordion: only one expanded at a time) -->
-            {#each selectableFolders as folder (folder.folderKey)}
-              <ProjectFolderItem
-                {folder}
-                label={cwdDisplayLabel(folder.cwd)}
-                expanded={folder.cwd === projectCwd}
-                onToggle={() => {
-                  projectCwd = projectCwd === folder.cwd ? "" : folder.cwd;
-                }}
+            </ProjectFolderItem>
+          {/each}
+          <!-- Global scope (same style as project folders, globe icon) -->
+          {#if memoryScopeGlobal.length > 0}
+            <div class="mb-0.5">
+              <button
+                class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
+                onclick={() => toggleMemoryScope("global")}
               >
-                {#if memoryLoading}
-                  <div class="flex items-center justify-center py-6">
-                    <div
-                      class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
-                    ></div>
-                  </div>
-                {:else if memoryScopeFolder.length > 0}
-                  {#each filterVisibleCandidates(memoryScopeFolder, true, memorySelectedFile) as file}
+                <svg
+                  class="h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-150 {memoryScopeExpanded[
+                    'global'
+                  ]
+                    ? 'rotate-90'
+                    : ''}"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg
+                >
+                <!-- Globe icon -->
+                <svg
+                  class="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path
+                    d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+                  /></svg
+                >
+                <span class="truncate">{t("memory_tabGlobal")}</span>
+              </button>
+              {#if memoryScopeExpanded["global"]}
+                <div class="pl-3">
+                  {#each filterVisibleCandidates(memoryScopeGlobal, true, memorySelectedFile) as file}
                     <button
                       class="flex w-full items-center gap-1.5 py-1 pl-4 pr-3 text-xs transition-colors
-                        {memorySelectedFile === file.path
+                          {memorySelectedFile === file.path
                         ? 'bg-sidebar-accent text-sidebar-foreground'
                         : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
                       onclick={() => selectMemoryFile(file)}
                       title={file.path}
                     >
                       <svg
-                        class="h-3 w-3 shrink-0 {file.scope === 'memory'
-                          ? 'text-amber-400'
-                          : file.exists
-                            ? 'text-blue-400'
-                            : 'text-muted-foreground/40'}"
+                        class="h-3 w-3 shrink-0 {file.exists
+                          ? 'text-blue-400'
+                          : 'text-muted-foreground/40'}"
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -2880,566 +3321,508 @@
                       {/if}
                     </button>
                   {/each}
-                {:else}
-                  <p class="px-2 py-3 text-xs text-muted-foreground">
-                    {t("memory_noProjectFiles")}
+                </div>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Open folder button -->
+          <button
+            class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
+            onclick={() => pickFolder(false)}
+          >
+            <svg
+              class="h-3.5 w-3.5 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
+            >
+            <span>+ {t("project_openFolder")}</span>
+          </button>
+        </div>
+      {:else}
+        <!-- Mode-specific command group -->
+        <div class="shrink-0 space-y-1 px-2 pb-3">
+          {#each modeMenuItems as item}
+            <button
+              type="button"
+              class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-sidebar-foreground transition-colors hover:bg-sidebar-accent/70 {item.action ===
+                'more' && modeMoreOpen
+                ? 'bg-sidebar-accent/70'
+                : ''}"
+              onclick={() => handleModeMenuAction(item.action)}
+            >
+              {#if item.icon === "plus"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"><path d="M12 5v14" /><path d="M5 12h14" /></svg
+                >
+              {:else if item.icon === "folder"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><path
+                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                  /></svg
+                >
+              {:else if item.icon === "calendar"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><path d="M8 2v4" /><path d="M16 2v4" /><rect
+                    width="18"
+                    height="18"
+                    x="3"
+                    y="4"
+                    rx="2"
+                  /><path d="M3 10h18" /></svg
+                >
+              {:else if item.icon === "book"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M4 4v15.5" /><path
+                    d="M20 22V6a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 6.5v13"
+                  /></svg
+                >
+              {:else if item.icon === "chart"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg
+                >
+              {:else if item.icon === "sparkles"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><path
+                    d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96l-6.14 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"
+                  /></svg
+                >
+              {:else if item.icon === "package"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><path d="m7.5 4.27 9 5.15" /><path
+                    d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+                  /><path d="m3.3 7 8.7 5 8.7-5" /><path d="M12 22V12" /></svg
+                >
+              {:else if item.icon === "server"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><rect x="2" y="3" width="20" height="8" rx="2" /><rect
+                    x="2"
+                    y="13"
+                    width="20"
+                    height="8"
+                    rx="2"
+                  /><path d="M6 7h.01" /><path d="M6 17h.01" /></svg
+                >
+              {:else if item.icon === "webhook"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><path
+                    d="M18 16.98h-5.99c-1.1 0-1.95-.94-1.72-2.02.3-1.41 1.31-2.96 3.71-2.96h2"
+                  /><circle cx="18" cy="17" r="3" /><circle cx="6" cy="5" r="3" /><circle
+                    cx="6"
+                    cy="19"
+                    r="3"
+                  /><path d="M9 5h1a6 6 0 0 1 6 6v1" /></svg
+                >
+              {:else if item.icon === "agents"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  ><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path
+                    d="M2 14h2"
+                  /><path d="M20 14h2" /><path d="M9 13v2" /><path d="M15 13v2" /></svg
+                >
+              {:else if item.icon === "zap"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg
+                >
+              {:else if item.icon === "spark"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><path
+                    d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"
+                  /></svg
+                >
+              {:else if item.icon === "briefcase"}
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  ><rect width="20" height="14" x="2" y="7" rx="2" /><path
+                    d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"
+                  /></svg
+                >
+              {:else}
+                <svg
+                  class="h-4 w-4 shrink-0 transition-transform {item.action === 'more' &&
+                  modeMoreOpen
+                    ? 'rotate-180'
+                    : ''}"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"><path d="m6 9 6 6 6-6" /></svg
+                >
+              {/if}
+              <span class="min-w-0 truncate">{item.label}</span>
+            </button>
+          {/each}
+          {#if modeMoreOpen && modeMoreItems.length > 0}
+            <div class="ml-3 border-l border-sidebar-border/70 pl-2">
+              {#each modeMoreItems as item}
+                <button
+                  type="button"
+                  class="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors {isPluginsPage &&
+                  pluginActiveSection === item.action
+                    ? 'bg-sidebar-accent text-sidebar-foreground'
+                    : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'}"
+                  onclick={() => handleModeMenuAction(item.action)}
+                >
+                  {#if item.icon === "server"}
+                    <svg
+                      class="h-3.5 w-3.5 shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      ><rect x="2" y="3" width="20" height="8" rx="2" /><rect
+                        x="2"
+                        y="13"
+                        width="20"
+                        height="8"
+                        rx="2"
+                      /><path d="M6 7h.01" /><path d="M6 17h.01" /></svg
+                    >
+                  {:else if item.icon === "webhook"}
+                    <svg
+                      class="h-3.5 w-3.5 shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      ><path
+                        d="M18 16.98h-5.99c-1.1 0-1.95-.94-1.72-2.02.3-1.41 1.31-2.96 3.71-2.96h2"
+                      /><circle cx="18" cy="17" r="3" /><circle cx="6" cy="5" r="3" /><circle
+                        cx="6"
+                        cy="19"
+                        r="3"
+                      /><path d="M9 5h1a6 6 0 0 1 6 6v1" /></svg
+                    >
+                  {:else if item.icon === "agents"}
+                    <svg
+                      class="h-3.5 w-3.5 shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      ><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path
+                        d="M2 14h2"
+                      /><path d="M20 14h2" /><path d="M9 13v2" /><path d="M15 13v2" /></svg
+                    >
+                  {:else}
+                    <svg
+                      class="h-3.5 w-3.5 shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg
+                    >
+                  {/if}
+                  <span class="min-w-0 truncate">{item.label}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <!-- Tab content -->
+        {#if panelTab === "chats" || isChatPage}
+          {#if searchPanelOpen || runSearchQuery.trim()}
+            <div class="px-2 pb-2 shrink-0">
+              <input
+                type="text"
+                bind:value={runSearchQuery}
+                oninput={onDeepQueryInput}
+                placeholder={t("sidebar_searchChats")}
+                class="h-8 w-full rounded-md border border-sidebar-border bg-background px-2 text-xs text-sidebar-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-ring/50"
+              />
+              {#if runSearchQuery.trim()}
+                {#if searching}
+                  <p class="text-xs text-muted-foreground px-1 pt-0.5">
+                    {t("runs_searching")}
+                  </p>
+                {:else if visibleSearchResults.length > 0}
+                  <p
+                    class="flex items-center justify-between text-xs text-muted-foreground px-1 pt-0.5"
+                  >
+                    <span
+                      >{t("runs_resultsCount", {
+                        count: String(visibleSearchResults.length),
+                      })}</span
+                    >
+                    <a
+                      href="/history?q={encodeURIComponent(runSearchQuery)}"
+                      class="text-primary/70 hover:text-primary transition-colors"
+                      >{t("history_advancedSearch")}</a
+                    >
                   </p>
                 {/if}
-              </ProjectFolderItem>
-            {/each}
-            <!-- Global scope (same style as project folders, globe icon) -->
-            {#if memoryScopeGlobal.length > 0}
-              <div class="mb-0.5">
-                <button
-                  class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
-                  onclick={() => toggleMemoryScope("global")}
-                >
-                  <svg
-                    class="h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-150 {memoryScopeExpanded[
-                      'global'
-                    ]
-                      ? 'rotate-90'
-                      : ''}"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg
-                  >
-                  <!-- Globe icon -->
-                  <svg
-                    class="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path
-                      d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                    /></svg
-                  >
-                  <span class="truncate">{t("memory_tabGlobal")}</span>
-                </button>
-                {#if memoryScopeExpanded["global"]}
-                  <div class="pl-3">
-                    {#each filterVisibleCandidates(memoryScopeGlobal, true, memorySelectedFile) as file}
-                      <button
-                        class="flex w-full items-center gap-1.5 py-1 pl-4 pr-3 text-xs transition-colors
-                          {memorySelectedFile === file.path
-                          ? 'bg-sidebar-accent text-sidebar-foreground'
-                          : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}"
-                        onclick={() => selectMemoryFile(file)}
-                        title={file.path}
-                      >
-                        <svg
-                          class="h-3 w-3 shrink-0 {file.exists
-                            ? 'text-blue-400'
-                            : 'text-muted-foreground/40'}"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          ><path
-                            d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"
-                          /><path d="M14 2v4a2 2 0 0 0 2 2h4" /></svg
-                        >
-                        <span class="min-w-0 truncate">{file.label}</span>
-                        {#if !file.exists}
-                          <span class="ml-auto text-[10px] text-muted-foreground shrink-0"
-                            >{t("memory_new")}</span
-                          >
-                        {/if}
-                      </button>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {/if}
+              {/if}
+            </div>
+          {/if}
 
-            <!-- Open folder button -->
-            <button
-              class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
-              onclick={() => pickFolder(false)}
-            >
-              <svg
-                class="h-3.5 w-3.5 shrink-0"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
-              >
-              <span>+ {t("project_openFolder")}</span>
-            </button>
-          </div>
-        {:else}
-          <!-- Mode-specific command group -->
-          <div class="shrink-0 space-y-1 px-2 pb-3">
-            {#each modeMenuItems as item}
-              <button
-                type="button"
-                class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-sidebar-foreground transition-colors hover:bg-sidebar-accent/70 {item.action ===
-                  'more' && modeMoreOpen
-                  ? 'bg-sidebar-accent/70'
-                  : ''}"
-                onclick={() => handleModeMenuAction(item.action)}
-              >
-                {#if item.icon === "plus"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"><path d="M12 5v14" /><path d="M5 12h14" /></svg
-                  >
-                {:else if item.icon === "folder"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><path
-                      d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                    /></svg
-                  >
-                {:else if item.icon === "calendar"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><path d="M8 2v4" /><path d="M16 2v4" /><rect
-                      width="18"
-                      height="18"
-                      x="3"
-                      y="4"
-                      rx="2"
-                    /><path d="M3 10h18" /></svg
-                  >
-                {:else if item.icon === "book"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M4 4v15.5" /><path
-                      d="M20 22V6a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 6.5v13"
-                    /></svg
-                  >
-                {:else if item.icon === "chart"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg
-                  >
-                {:else if item.icon === "sparkles"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><path
-                      d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96l-6.14 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"
-                    /></svg
-                  >
-                {:else if item.icon === "package"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><path d="m7.5 4.27 9 5.15" /><path
-                      d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
-                    /><path d="m3.3 7 8.7 5 8.7-5" /><path d="M12 22V12" /></svg
-                  >
-                {:else if item.icon === "server"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><rect x="2" y="3" width="20" height="8" rx="2" /><rect
-                      x="2"
-                      y="13"
-                      width="20"
-                      height="8"
-                      rx="2"
-                    /><path d="M6 7h.01" /><path d="M6 17h.01" /></svg
-                  >
-                {:else if item.icon === "webhook"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><path
-                      d="M18 16.98h-5.99c-1.1 0-1.95-.94-1.72-2.02.3-1.41 1.31-2.96 3.71-2.96h2"
-                    /><circle cx="18" cy="17" r="3" /><circle cx="6" cy="5" r="3" /><circle
-                      cx="6"
-                      cy="19"
-                      r="3"
-                    /><path d="M9 5h1a6 6 0 0 1 6 6v1" /></svg
-                  >
-                {:else if item.icon === "agents"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    ><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path
-                      d="M2 14h2"
-                    /><path d="M20 14h2" /><path d="M9 13v2" /><path d="M15 13v2" /></svg
-                  >
-                {:else if item.icon === "zap"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg
-                  >
-                {:else if item.icon === "spark"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><path
-                      d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"
-                    /></svg
-                  >
-                {:else if item.icon === "briefcase"}
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><rect width="20" height="14" x="2" y="7" rx="2" /><path
-                      d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"
-                    /></svg
-                  >
-                {:else}
-                  <svg
-                    class="h-4 w-4 shrink-0 transition-transform {item.action === 'more' &&
-                    modeMoreOpen
-                      ? 'rotate-180'
-                      : ''}"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"><path d="m6 9 6 6 6-6" /></svg
-                  >
-                {/if}
-                <span class="min-w-0 truncate">{item.label}</span>
-              </button>
-            {/each}
-            {#if modeMoreOpen && modeMoreItems.length > 0}
-              <div class="ml-3 border-l border-sidebar-border/70 pl-2">
-                {#each modeMoreItems as item}
-                  <button
-                    type="button"
-                    class="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors {isPluginsPage &&
-                    pluginActiveSection === item.action
-                      ? 'bg-sidebar-accent text-sidebar-foreground'
-                      : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'}"
-                    onclick={() => handleModeMenuAction(item.action)}
-                  >
-                    {#if item.icon === "server"}
-                      <svg
-                        class="h-3.5 w-3.5 shrink-0"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        ><rect x="2" y="3" width="20" height="8" rx="2" /><rect
-                          x="2"
-                          y="13"
-                          width="20"
-                          height="8"
-                          rx="2"
-                        /><path d="M6 7h.01" /><path d="M6 17h.01" /></svg
-                      >
-                    {:else if item.icon === "webhook"}
-                      <svg
-                        class="h-3.5 w-3.5 shrink-0"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        ><path
-                          d="M18 16.98h-5.99c-1.1 0-1.95-.94-1.72-2.02.3-1.41 1.31-2.96 3.71-2.96h2"
-                        /><circle cx="18" cy="17" r="3" /><circle cx="6" cy="5" r="3" /><circle
-                          cx="6"
-                          cy="19"
-                          r="3"
-                        /><path d="M9 5h1a6 6 0 0 1 6 6v1" /></svg
-                      >
-                    {:else if item.icon === "agents"}
-                      <svg
-                        class="h-3.5 w-3.5 shrink-0"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        ><path d="M12 8V4H8" /><rect
-                          width="16"
-                          height="12"
-                          x="4"
-                          y="8"
-                          rx="2"
-                        /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M9 13v2" /><path
-                          d="M15 13v2"
-                        /></svg
-                      >
-                    {:else}
-                      <svg
-                        class="h-3.5 w-3.5 shrink-0"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        ><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg
-                      >
-                    {/if}
-                    <span class="min-w-0 truncate">{item.label}</span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-
-          <!-- Tab content -->
-          {#if panelTab === "chats" || isChatPage}
-            {#if searchPanelOpen || runSearchQuery.trim()}
-              <div class="px-2 pb-2 shrink-0">
-                <input
-                  type="text"
-                  bind:value={runSearchQuery}
-                  oninput={onDeepQueryInput}
-                  placeholder={t("sidebar_searchChats")}
-                  class="h-8 w-full rounded-md border border-sidebar-border bg-background px-2 text-xs text-sidebar-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-ring/50"
-                />
-                {#if runSearchQuery.trim()}
-                  {#if searching}
-                    <p class="text-xs text-muted-foreground px-1 pt-0.5">
-                      {t("runs_searching")}
-                    </p>
-                  {:else if visibleSearchResults.length > 0}
-                    <p
-                      class="flex items-center justify-between text-xs text-muted-foreground px-1 pt-0.5"
-                    >
-                      <span
-                        >{t("runs_resultsCount", {
-                          count: String(visibleSearchResults.length),
-                        })}</span
-                      >
-                      <a
-                        href="/history?q={encodeURIComponent(runSearchQuery)}"
-                        class="text-primary/70 hover:text-primary transition-colors"
-                        >{t("history_advancedSearch")}</a
-                      >
-                    </p>
-                  {/if}
-                {/if}
-              </div>
-            {/if}
-
-            {#if runSearchQuery.trim()}
-              <!-- Search results -->
-              <div class="flex-1 overflow-y-auto">
-                {#if searching && visibleSearchResults.length === 0}
-                  <div class="flex items-center justify-center py-10">
-                    <div
-                      class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
-                    ></div>
-                  </div>
-                {:else if !searching && visibleSearchResults.length === 0}
-                  <div class="flex items-center justify-center px-3 py-10 text-center">
-                    <p class="text-xs text-muted-foreground">{t("runs_noMatching")}</p>
-                  </div>
-                {:else}
-                  {#each visibleSearchResults as result}
-                    <button
-                      class="w-full text-left flex flex-col gap-0.5 px-3 py-2 hover:bg-sidebar-accent/50 transition-colors text-sidebar-foreground"
-                      onclick={() => {
-                        runSearchQuery = "";
-                        searchResults = [];
-                        goto(
-                          `/chat?run=${result.runId}&scrollTo=${encodeURIComponent(result.matchedEventId || result.matchedTs)}`,
-                        );
-                      }}
-                    >
-                      <p class="text-[12px] min-w-0 line-clamp-2 break-all">
-                        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-                        {@html highlightMatch(
-                          snippetAround(result.matchedText, runSearchQuery, 80),
-                          runSearchQuery,
-                        )}
-                      </p>
-                      <div class="flex items-center gap-1 text-xs text-muted-foreground min-w-0">
-                        <span class="flex-1 min-w-0 truncate"
-                          >{result.runName || truncate(result.runPrompt, 30)}</span
-                        >
-                        <span class="ml-auto shrink-0">{relativeTime(result.matchedTs)}</span>
-                      </div>
-                    </button>
-                  {/each}
-                {/if}
-              </div>
-            {:else}
-              <!-- Project-grouped conversations -->
-              <div class="flex-1 overflow-y-auto px-2 py-1">
-                {#each sidebarProjectFolders as folder (folder.folderKey)}
-                  {@const activeFolder =
-                    folder.cwd === projectCwd ||
-                    folder.conversations.some((conv) =>
-                      conv.runs.some((run) => run.id === selectedRunId),
-                    )}
-                  <ProjectFolderItem
-                    {folder}
-                    label={folder.isUncategorized
-                      ? t("sidebar_uncategorized")
-                      : cwdDisplayLabel(folder.cwd)}
-                    expanded={expandedProjects.has(folder.folderKey) || activeFolder}
-                    active={activeFolder}
-                    shortcutIndex={workspaceShortcutIndexes.get(folder.folderKey)}
-                    showShortcutHints={workspaceShortcutHintsVisible}
-                    {selectedRunId}
-                    onToggle={() => toggleProject(folder.folderKey)}
-                    onSelectConversation={openConversationByRunId}
-                    onResume={resumeConversation}
-                    onDelete={requestDeleteConversation}
-                    onNewChat={folder.isUncategorized
-                      ? undefined
-                      : () => newChatInFolder(folder.cwd)}
-                    onRemove={folder.isUncategorized
-                      ? undefined
-                      : () => requestRemoveProject(folder.cwd)}
-                    onConversationContextMenu={openConversationContextMenu}
-                    onConversationActionMenu={openConversationActionMenu}
-                  />
-                {/each}
-                <!-- Open folder... -->
-                <button
-                  class="mt-2 flex h-8 w-full items-center gap-2 rounded-md px-2 text-[13px] text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors"
-                  onclick={() => pickFolder(true)}
-                >
-                  <svg
-                    class="h-4 w-4 shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
-                  >
-                  <span>{t("project_openFolder")}</span>
-                </button>
-
-                {#if sidebarProjectFolders.length === 0}
-                  <div class="flex flex-col items-center gap-2 px-3 py-6 text-center">
-                    <p class="text-xs text-muted-foreground">
-                      {t("sidebar_noConversationsYet")}<br />{t("sidebar_startNewChat")}
-                    </p>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          {:else if panelTab === "teams"}
-            <!-- Teams list in sidebar -->
-            <div class="flex-1 overflow-y-auto px-2 py-1">
-              {#if teamStore.loading}
-                <div class="flex items-center justify-center py-6">
+          {#if runSearchQuery.trim()}
+            <!-- Search results -->
+            <div class="flex-1 overflow-y-auto">
+              {#if searching && visibleSearchResults.length === 0}
+                <div class="flex items-center justify-center py-10">
                   <div
                     class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
                   ></div>
                 </div>
-              {:else if teamStore.teams.length === 0}
-                <div class="flex flex-col items-center gap-1 px-3 py-6 text-center">
-                  <p class="text-xs text-muted-foreground">{t("sidebar_noActiveTeams")}</p>
-                  <p class="text-[10px] text-muted-foreground/60">{t("sidebar_startTeamHint")}</p>
+              {:else if !searching && visibleSearchResults.length === 0}
+                <div class="flex items-center justify-center px-3 py-10 text-center">
+                  <p class="text-xs text-muted-foreground">{t("runs_noMatching")}</p>
                 </div>
               {:else}
-                {#each teamStore.teams as team}
+                {#each visibleSearchResults as result}
                   <button
-                    class="flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left transition-colors mb-0.5
-                        {teamStore.selectedTeam === team.name
-                      ? 'bg-sidebar-accent text-sidebar-foreground'
-                      : 'hover:bg-sidebar-accent/50 text-sidebar-foreground'}"
+                    class="w-full text-left flex flex-col gap-0.5 px-3 py-2 hover:bg-sidebar-accent/50 transition-colors text-sidebar-foreground"
                     onclick={() => {
-                      teamStore.selectTeam(team.name);
-                      goto("/teams");
+                      runSearchQuery = "";
+                      searchResults = [];
+                      goto(
+                        `/chat?run=${result.runId}&scrollTo=${encodeURIComponent(result.matchedEventId || result.matchedTs)}`,
+                      );
                     }}
                   >
-                    <div class="flex items-center gap-1.5">
-                      <span class="h-2 w-2 rounded-full bg-teal-500 shrink-0"></span>
-                      <span class="text-[13px] font-medium min-w-0 truncate">{team.name}</span>
-                    </div>
-                    {#if team.description}
-                      <p class="text-xs text-muted-foreground truncate pl-3.5">
-                        {team.description}
-                      </p>
-                    {/if}
-                    <div class="flex items-center gap-2 pl-3.5 text-xs text-muted-foreground">
-                      <span>{t("sidebar_members", { count: String(team.member_count) })}</span>
-                      <span>{t("sidebar_tasks", { count: String(team.task_count) })}</span>
+                    <p class="text-[12px] min-w-0 line-clamp-2 break-all">
+                      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                      {@html highlightMatch(
+                        snippetAround(result.matchedText, runSearchQuery, 80),
+                        runSearchQuery,
+                      )}
+                    </p>
+                    <div class="flex items-center gap-1 text-xs text-muted-foreground min-w-0">
+                      <span class="flex-1 min-w-0 truncate"
+                        >{result.runName || truncate(result.runPrompt, 30)}</span
+                      >
+                      <span class="ml-auto shrink-0">{relativeTime(result.matchedTs)}</span>
                     </div>
                   </button>
                 {/each}
               {/if}
             </div>
-          {/if}
-        {/if}
-        <div class="border-t border-sidebar-border px-3 py-3">
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
-              onclick={openProfileModal}
-              title="HelionCoder"
-            >
-              <span
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[hsl(42_48%_88%)] text-sm font-semibold text-neutral-900"
-                >{displayInitial}</span
+          {:else}
+            <!-- Project-grouped conversations -->
+            <div class="flex-1 overflow-y-auto px-2 py-1">
+              {#each sidebarProjectFolders as folder (folder.folderKey)}
+                {@const activeFolder =
+                  folder.cwd === projectCwd ||
+                  folder.conversations.some((conv) =>
+                    conv.runs.some((run) => run.id === selectedRunId),
+                  )}
+                <ProjectFolderItem
+                  {folder}
+                  label={folder.isUncategorized
+                    ? t("sidebar_uncategorized")
+                    : cwdDisplayLabel(folder.cwd)}
+                  expanded={expandedProjects.has(folder.folderKey) || activeFolder}
+                  active={activeFolder}
+                  shortcutIndex={workspaceShortcutIndexes.get(folder.folderKey)}
+                  showShortcutHints={workspaceShortcutHintsVisible}
+                  {selectedRunId}
+                  onToggle={() => toggleProject(folder.folderKey)}
+                  onSelectConversation={openConversationByRunId}
+                  onResume={resumeConversation}
+                  onDelete={requestDeleteConversation}
+                  onNewChat={folder.isUncategorized ? undefined : () => newChatInFolder(folder.cwd)}
+                  onRemove={folder.isUncategorized
+                    ? undefined
+                    : () => requestRemoveProject(folder.cwd)}
+                  onConversationContextMenu={openConversationContextMenu}
+                  onConversationActionMenu={openConversationActionMenu}
+                />
+              {/each}
+              <!-- Open folder... -->
+              <button
+                class="mt-2 flex h-8 w-full items-center gap-2 rounded-md px-2 text-[13px] text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors"
+                onclick={() => pickFolder(true)}
               >
-              <span class="min-w-0">
-                <span class="block truncate text-[13px] font-medium text-sidebar-foreground"
-                  >{displayName}</span
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
                 >
-                <span class="block truncate text-[11px] text-muted-foreground">HelionCoder</span>
-              </span>
-            </button>
+                <span>{t("project_openFolder")}</span>
+              </button>
+
+              {#if sidebarProjectFolders.length === 0}
+                <div class="flex flex-col items-center gap-2 px-3 py-6 text-center">
+                  <p class="text-xs text-muted-foreground">
+                    {t("sidebar_noConversationsYet")}<br />{t("sidebar_startNewChat")}
+                  </p>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {:else if panelTab === "teams"}
+          <!-- Teams list in sidebar -->
+          <div class="flex-1 overflow-y-auto px-2 py-1">
+            {#if teamStore.loading}
+              <div class="flex items-center justify-center py-6">
+                <div
+                  class="h-4 w-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"
+                ></div>
+              </div>
+            {:else if teamStore.teams.length === 0}
+              <div class="flex flex-col items-center gap-1 px-3 py-6 text-center">
+                <p class="text-xs text-muted-foreground">{t("sidebar_noActiveTeams")}</p>
+                <p class="text-[10px] text-muted-foreground/60">{t("sidebar_startTeamHint")}</p>
+              </div>
+            {:else}
+              {#each teamStore.teams as team}
+                <button
+                  class="flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left transition-colors mb-0.5
+                        {teamStore.selectedTeam === team.name
+                    ? 'bg-sidebar-accent text-sidebar-foreground'
+                    : 'hover:bg-sidebar-accent/50 text-sidebar-foreground'}"
+                  onclick={() => {
+                    teamStore.selectTeam(team.name);
+                    goto("/teams");
+                  }}
+                >
+                  <div class="flex items-center gap-1.5">
+                    <span class="h-2 w-2 rounded-full bg-teal-500 shrink-0"></span>
+                    <span class="text-[13px] font-medium min-w-0 truncate">{team.name}</span>
+                  </div>
+                  {#if team.description}
+                    <p class="text-xs text-muted-foreground truncate pl-3.5">
+                      {team.description}
+                    </p>
+                  {/if}
+                  <div class="flex items-center gap-2 pl-3.5 text-xs text-muted-foreground">
+                    <span>{t("sidebar_members", { count: String(team.member_count) })}</span>
+                    <span>{t("sidebar_tasks", { count: String(team.task_count) })}</span>
+                  </div>
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
+      {/if}
+      <div class="border-t border-sidebar-border px-3 py-3">
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
+            onclick={openProfileModal}
+            title="HelionCoder"
+          >
+            <span
+              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[hsl(42_48%_88%)] text-sm font-semibold text-neutral-900"
+              >{displayInitial}</span
+            >
+            <span class="min-w-0">
+              <span class="block truncate text-[13px] font-medium text-sidebar-foreground"
+                >{displayName}</span
+              >
+              <span class="block truncate text-[11px] text-muted-foreground">HelionCoder</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+            onclick={() => goto("/settings")}
+            title={currentLocale().startsWith("zh") ? "设置" : "Settings"}
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><path d="M4 21v-7" /><path d="M4 10V3" /><path d="M12 21v-9" /><path
+                d="M12 8V3"
+              /><path d="M20 21v-5" /><path d="M20 12V3" /><path d="M2 14h4" /><path
+                d="M10 8h4"
+              /><path d="M18 16h4" /></svg
+            >
+          </button>
+          <div class="relative">
             <button
               type="button"
               class="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-              onclick={() => goto("/settings")}
-              title={currentLocale().startsWith("zh") ? "设置" : "Settings"}
+              onclick={() => (themeMenuOpen = !themeMenuOpen)}
+              title={themeMode === "dark"
+                ? t("layout_themeTitle_dark")
+                : themeMode === "light"
+                  ? t("layout_themeTitle_light")
+                  : t("layout_themeTitle_system")}
             >
               <svg
                 class="h-4 w-4"
@@ -3449,77 +3832,51 @@
                 stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                ><path d="M4 21v-7" /><path d="M4 10V3" /><path d="M12 21v-9" /><path
-                  d="M12 8V3"
-                /><path d="M20 21v-5" /><path d="M20 12V3" /><path d="M2 14h4" /><path
-                  d="M10 8h4"
-                /><path d="M18 16h4" /></svg
+                ><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path
+                  d="m4.93 4.93 1.41 1.41"
+                /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path
+                  d="m6.34 17.66-1.41 1.41"
+                /><path d="m19.07 4.93-1.41 1.41" /></svg
               >
             </button>
-            <div class="relative">
-              <button
-                type="button"
-                class="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-                onclick={() => (themeMenuOpen = !themeMenuOpen)}
-                title={themeMode === "dark"
-                  ? t("layout_themeTitle_dark")
-                  : themeMode === "light"
-                    ? t("layout_themeTitle_light")
-                    : t("layout_themeTitle_system")}
+            {#if themeMenuOpen}
+              <div
+                class="fixed inset-0 z-40"
+                role="button"
+                tabindex="-1"
+                onclick={() => (themeMenuOpen = false)}
+                onkeydown={(e) => e.key === "Escape" && (themeMenuOpen = false)}
+              ></div>
+              <div
+                class="absolute bottom-full right-0 z-50 mb-2 w-40 rounded-lg border border-sidebar-border bg-popover p-1 shadow-lg"
               >
-                <svg
-                  class="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  ><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path
-                    d="m4.93 4.93 1.41 1.41"
-                  /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path
-                    d="M20 12h2"
-                  /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></svg
-                >
-              </button>
-              {#if themeMenuOpen}
-                <div
-                  class="fixed inset-0 z-40"
-                  role="button"
-                  tabindex="-1"
-                  onclick={() => (themeMenuOpen = false)}
-                  onkeydown={(e) => e.key === "Escape" && (themeMenuOpen = false)}
-                ></div>
-                <div
-                  class="absolute bottom-full right-0 z-50 mb-2 w-40 rounded-lg border border-sidebar-border bg-popover p-1 shadow-lg"
-                >
-                  {#each [{ id: "dark", label: currentLocale().startsWith("zh") ? "深色" : "Dark" }, { id: "light", label: currentLocale().startsWith("zh") ? "浅色" : "Light" }, { id: "system", label: currentLocale().startsWith("zh") ? "跟随系统" : "Match system" }] as item}
-                    <button
-                      type="button"
-                      class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors
+                {#each [{ id: "dark", label: currentLocale().startsWith("zh") ? "深色" : "Dark" }, { id: "light", label: currentLocale().startsWith("zh") ? "浅色" : "Light" }, { id: "system", label: currentLocale().startsWith("zh") ? "跟随系统" : "Match system" }] as item}
+                  <button
+                    type="button"
+                    class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors
                         {themeMode === item.id
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-popover-foreground hover:bg-accent/60'}"
-                      onclick={() => setTheme(item.id as ThemeMode)}
-                    >
-                      <span>{item.label}</span>
-                      {#if themeMode === item.id}
-                        <span class="text-[10px]">✓</span>
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-popover-foreground hover:bg-accent/60'}"
+                    onclick={() => setTheme(item.id as ThemeMode)}
+                  >
+                    <span>{item.label}</span>
+                    {#if themeMode === item.id}
+                      <span class="text-[10px]">✓</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
           </div>
         </div>
-        <!-- Resize handle -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors z-10"
-          onpointerdown={startResize}
-        ></div>
       </div>
+      <!-- Resize handle -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors z-10"
+        onpointerdown={startResize}
+      ></div>
+    </div>
   </aside>
 
   {#if sidebarOpen}
@@ -3550,93 +3907,119 @@
       : ''} {!sidebarOpen ? 'pt-12' : ''}"
   >
     <div
-      class="titlebar-drag absolute left-0 right-0 top-0 z-40 flex h-12 items-center gap-1.5 bg-background/75 pr-4 backdrop-blur transition-[opacity,transform] duration-200 ease-out {reserveMacTrafficLights
-        ? 'pl-[92px]'
-        : 'pl-3'} {sidebarOpen
+      class="titlebar-drag absolute left-0 right-0 top-0 z-40 flex h-12 items-center gap-1.5 bg-background/75 backdrop-blur transition-[opacity,transform] duration-200 ease-out {isWindowsDesktop
+        ? 'pr-[156px]'
+        : 'pr-4'} {reserveMacTrafficLights ? 'pl-[92px]' : 'pl-3'} {sidebarOpen
         ? 'pointer-events-none -translate-x-2 opacity-0'
         : 'opacity-100'}"
       data-tauri-drag-region
       aria-hidden={sidebarOpen}
     >
-      <div class="flex min-w-0 items-center gap-1.5 {reserveMacTrafficLights ? 'mac-titlebar-control-strip' : ''}">
-      <button
-        type="button"
-        class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-        onclick={toggleSidebar}
-        title={t("layout_toggleSidebar")}
-        aria-label={t("layout_toggleSidebar")}
-        tabindex={sidebarOpen ? -1 : 0}
+      <div
+        class="flex min-w-0 items-center gap-1.5 {reserveMacTrafficLights
+          ? 'mac-titlebar-control-strip'
+          : ''}"
       >
-        <svg
-          class="h-4 w-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          ><rect width="16" height="14" x="4" y="5" rx="2" /><path d="M10 5v14" /></svg
+        {#if isWindowsDesktop}
+          <button
+            type="button"
+            data-windows-app-menu-trigger
+            class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+            onclick={toggleWindowsAppMenu}
+            title="Menu"
+            aria-label="Menu"
+            aria-expanded={windowsAppMenuOpen}
+            tabindex={sidebarOpen ? -1 : 0}
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              ><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg
+            >
+          </button>
+        {/if}
+        <button
+          type="button"
+          class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+          onclick={toggleSidebar}
+          title={t("layout_toggleSidebar")}
+          aria-label={t("layout_toggleSidebar")}
+          tabindex={sidebarOpen ? -1 : 0}
         >
-      </button>
-      <button
-        type="button"
-        class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-        onclick={navigateBack}
-        title={t("layout_goBack")}
-        aria-label={t("layout_goBack")}
-        tabindex={sidebarOpen ? -1 : 0}
-      >
-        <svg
-          class="h-4 w-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><rect width="16" height="14" x="4" y="5" rx="2" /><path d="M10 5v14" /></svg
+          >
+        </button>
+        <button
+          type="button"
+          class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+          onclick={navigateBack}
+          title={t("layout_goBack")}
+          aria-label={t("layout_goBack")}
+          tabindex={sidebarOpen ? -1 : 0}
         >
-      </button>
-      <button
-        type="button"
-        class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-        onclick={navigateForward}
-        title={t("layout_goForward")}
-        aria-label={t("layout_goForward")}
-        tabindex={sidebarOpen ? -1 : 0}
-      >
-        <svg
-          class="h-4 w-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg
+          >
+        </button>
+        <button
+          type="button"
+          class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+          onclick={navigateForward}
+          title={t("layout_goForward")}
+          aria-label={t("layout_goForward")}
+          tabindex={sidebarOpen ? -1 : 0}
         >
-      </button>
-      <button
-        type="button"
-        class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-        onclick={newChat}
-        title={t("layout_newConversation")}
-        aria-label={t("layout_newConversation")}
-        tabindex={sidebarOpen ? -1 : 0}
-      >
-        <svg
-          class="h-4 w-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg
+          >
+        </button>
+        <button
+          type="button"
+          class="titlebar-no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+          onclick={newChat}
+          title={t("layout_newConversation")}
+          aria-label={t("layout_newConversation")}
+          tabindex={sidebarOpen ? -1 : 0}
         >
-      </button>
-      {#if !isChatPage}
-        <div class="ml-2 min-w-0 truncate text-sm font-medium text-foreground/85">
-          {pageName}
-        </div>
-      {/if}
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg
+          >
+        </button>
+        {#if !isChatPage}
+          <div class="ml-2 min-w-0 truncate text-sm font-medium text-foreground/85">
+            {pageName}
+          </div>
+        {/if}
       </div>
     </div>
     <!-- Top bar (non-chat pages only — chat uses SessionStatusBar) -->
@@ -3679,6 +4062,63 @@
     </main>
   </div>
 </div>
+
+{#if windowsAppMenuOpen}
+  <div
+    data-windows-app-menu
+    data-no-window-drag
+    class="titlebar-no-drag fixed left-2 top-9 z-[120] flex max-h-[calc(100vh-3rem)] overflow-hidden rounded-md border border-white/10 bg-[#2b2b2d]/98 py-1 text-[13px] text-[#e8e8e8] shadow-2xl ring-1 ring-black/30 backdrop-blur-xl"
+    role="menu"
+  >
+    <div class="w-44 py-0.5">
+      {#each windowsAppMenuGroups as group}
+        <button
+          type="button"
+          class="flex h-8 w-full items-center gap-3 px-4 text-left transition-colors {windowsAppMenuActiveGroup ===
+          group.id
+            ? 'bg-[#3d3d3d] text-white'
+            : 'text-[#e3e3e3] hover:bg-[#383838] hover:text-white'}"
+          role="menuitem"
+          onpointerenter={() => (windowsAppMenuActiveGroup = group.id)}
+          onclick={() => (windowsAppMenuActiveGroup = group.id)}
+        >
+          <span class="min-w-0 flex-1 truncate">{group.label}</span>
+          <svg
+            class="h-3.5 w-3.5 shrink-0 text-[#bdbdbd]"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg
+          >
+        </button>
+      {/each}
+    </div>
+
+    <div class="min-w-64 border-l border-white/10 py-0.5">
+      {#each windowsAppMenuActiveItems as item}
+        {#if item.type === "separator"}
+          <div class="my-1 h-px bg-white/10"></div>
+        {:else}
+          <button
+            type="button"
+            class="flex h-8 w-full items-center gap-4 px-4 text-left text-[#e3e3e3] transition-colors hover:bg-[#3d3d3d] hover:text-white disabled:pointer-events-none disabled:opacity-45"
+            role="menuitem"
+            disabled={item.disabled}
+            onclick={() => void executeWindowsAppMenuCommand(item.command)}
+          >
+            <span class="min-w-0 flex-1 truncate">{item.label}</span>
+            {#if item.shortcut}
+              <span class="shrink-0 text-[11px] text-[#a8a8a8]">{item.shortcut}</span>
+            {/if}
+          </button>
+        {/if}
+      {/each}
+    </div>
+  </div>
+{/if}
 
 <CommandPalette
   bind:open={commandPaletteOpen}

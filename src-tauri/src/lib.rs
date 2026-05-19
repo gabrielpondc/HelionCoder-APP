@@ -313,6 +313,7 @@ pub fn run() {
             let cancel = app.state::<CancellationToken>().inner().clone();
             hooks::team_watcher::start_team_watcher(app.handle().clone(), cancel);
 
+            configure_main_window_chrome(app);
             setup_app_menu(app)?;
 
             // Global shortcut plugin — must be registered inside setup() with a handler
@@ -409,6 +410,28 @@ fn claim_windows_single_instance() -> bool {
     (unsafe { GetLastError() }) != ERROR_ALREADY_EXISTS
 }
 
+#[cfg(target_os = "windows")]
+fn setup_app_menu(_app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    log::debug!("[app] native application menu skipped on Windows");
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn configure_main_window_chrome(app: &tauri::App) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(e) = window.set_decorations(false) {
+            log::warn!("[app] failed to disable Windows title bar: {}", e);
+        }
+        if let Err(e) = window.set_shadow(true) {
+            log::debug!("[app] failed to enable Windows window shadow: {}", e);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_main_window_chrome(_app: &tauri::App) {}
+
+#[cfg(not(target_os = "windows"))]
 fn setup_app_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
