@@ -21,6 +21,21 @@ fn resolved_cli_available(resolved: &str) -> bool {
     crate::agent::claude_stream::which_binary(resolved).is_some()
 }
 
+fn is_local_http_url(raw: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(raw) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if host == "localhost" {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback() || ip.is_unspecified())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn check_agent_cli(agent: String) -> Result<CliCheckResult, String> {
     let normalized_agent = match agent.as_str() {
@@ -412,13 +427,6 @@ pub async fn list_api_models(
 ) -> Result<ApiModelListResult, String> {
     log::debug!("[diagnostics] list_api_models: base_url={}", base_url);
     let trimmed_key = api_key.trim();
-    if trimmed_key.is_empty() {
-        return Ok(ApiModelListResult {
-            models: vec![],
-            latency_ms: 0,
-            error: Some("API key is required".to_string()),
-        });
-    }
     let url = match resolve_openai_resource_url(&base_url, "models") {
         Ok(url) => url,
         Err(error) => {
@@ -429,18 +437,19 @@ pub async fn list_api_models(
             });
         }
     };
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15));
+    if is_local_http_url(&url) {
+        builder = builder.no_proxy();
+    }
+    let client = builder
         .build()
         .map_err(|e| format!("HTTP client build failed: {}", e))?;
     let start = std::time::Instant::now();
-    let resp = match client
-        .get(&url)
-        .header("accept", "application/json")
-        .header("authorization", format!("Bearer {}", trimmed_key))
-        .send()
-        .await
-    {
+    let mut request = client.get(&url).header("accept", "application/json");
+    if !trimmed_key.is_empty() {
+        request = request.header("authorization", format!("Bearer {}", trimmed_key));
+    }
+    let resp = match request.send().await {
         Ok(resp) => resp,
         Err(e) => {
             let latency_ms = start.elapsed().as_millis() as u64;

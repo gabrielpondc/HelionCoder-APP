@@ -208,17 +208,6 @@ export const PLATFORM_PRESETS: PlatformPreset[] = [
 
   // ── Local Proxy ──
   {
-    id: "ccswitch",
-    name: "CC Switch",
-    base_url: "http://127.0.0.1:15721",
-    auth_env_var: "ANTHROPIC_AUTH_TOKEN",
-    description: "CC Switch local proxy",
-    key_placeholder: "(leave empty)",
-    category: "local",
-    docs_url: "https://github.com/farion1231/cc-switch",
-    setup_hint: "settings_local_setupHint_ccswitch",
-  },
-  {
     id: "ccr",
     name: "Helion Router",
     base_url: "http://127.0.0.1:3456",

@@ -368,20 +368,9 @@ pub fn extract_run_usage(run_id: &str) -> Option<RawRunUsage> {
         return None;
     }
 
+    let meta_model = read_run_meta_string(run_id, "model");
     // Detect per-turn cost mode: CLI imports have per-turn total_cost_usd
-    let is_per_turn_cost = {
-        let meta_path = super::run_dir(run_id).join("meta.json");
-        meta_path
-            .exists()
-            .then(|| {
-                fs::read_to_string(&meta_path)
-                    .ok()
-                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                    .and_then(|v| v.get("source").and_then(|s| s.as_str()).map(String::from))
-            })
-            .flatten()
-            == Some("cli_import".to_string())
-    };
+    let is_per_turn_cost = read_run_meta_string(run_id, "source").as_deref() == Some("cli_import");
 
     let content = fs::read_to_string(&path).ok()?;
 
@@ -398,14 +387,30 @@ pub fn extract_run_usage(run_id: &str) -> Option<RawRunUsage> {
     let mut last_cache_write: u64 = 0;
     let mut last_num_turns: u64 = 0;
     let mut last_model_usage: HashMap<String, ModelUsageSummary> = HashMap::new();
+    let mut observed_model: Option<String> = None;
+
+    // Fallback path for OpenAI-compatible/custom providers that do not emit a
+    // result usage_update. Prefer message_usage if present; otherwise estimate
+    // from persisted user/assistant message text.
+    let mut fallback_user_turns: u64 = 0;
+    let mut fallback_est_input: u64 = 0;
+    let mut fallback_est_output: u64 = 0;
+    let mut fallback_actual_input: u64 = 0;
+    let mut fallback_actual_output: u64 = 0;
+    let mut fallback_actual_cache_read: u64 = 0;
+    let mut fallback_actual_cache_write: u64 = 0;
+    let mut fallback_has_actual_usage = false;
 
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        // Cheap pre-filter: skip ~99.6% of lines without JSON parsing
-        if !line.contains("\"usage_update\"") {
+        // Cheap pre-filter: skip most lines without JSON parsing.
+        if !(line.contains("\"usage_update\"")
+            || line.contains("\"user_message\"")
+            || line.contains("\"message_complete\""))
+        {
             continue;
         }
 
@@ -419,6 +424,42 @@ pub fn extract_run_usage(run_id: &str) -> Option<RawRunUsage> {
             continue;
         };
         let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if event_type == "user_message" {
+            fallback_user_turns += 1;
+            if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
+                fallback_est_input += estimate_tokens_from_text(text);
+            }
+            continue;
+        }
+
+        if event_type == "message_complete" {
+            if observed_model.is_none() {
+                observed_model = event
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .filter(|m| !m.is_empty())
+                    .map(String::from);
+            }
+            if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
+                fallback_est_output += estimate_tokens_from_text(text);
+            }
+            if let Some(message_usage) = event
+                .get("message_usage")
+                .or_else(|| event.get("messageUsage"))
+            {
+                let (input, output, cache_read, cache_write) =
+                    usage_counts_from_value(message_usage);
+                if input + output + cache_read + cache_write > 0 {
+                    fallback_has_actual_usage = true;
+                    fallback_actual_input += input;
+                    fallback_actual_output += output;
+                    fallback_actual_cache_read += cache_read;
+                    fallback_actual_cache_write += cache_write;
+                }
+            }
+            continue;
+        }
+
         if event_type != "usage_update" {
             continue;
         }
@@ -523,13 +564,75 @@ pub fn extract_run_usage(run_id: &str) -> Option<RawRunUsage> {
         }
     }
 
-    if !found_any {
+    let fallback_input = if fallback_has_actual_usage {
+        fallback_actual_input
+    } else {
+        fallback_est_input
+    };
+    let fallback_output = if fallback_has_actual_usage {
+        fallback_actual_output
+    } else {
+        fallback_est_output
+    };
+    let fallback_cache_read = if fallback_has_actual_usage {
+        fallback_actual_cache_read
+    } else {
+        0
+    };
+    let fallback_cache_write = if fallback_has_actual_usage {
+        fallback_actual_cache_write
+    } else {
+        0
+    };
+    let fallback_tokens =
+        fallback_input + fallback_output + fallback_cache_read + fallback_cache_write;
+
+    if !found_any && fallback_tokens == 0 && fallback_user_turns == 0 {
         return None;
     }
 
     // Add final segment's peak cost (only for cumulative mode)
     if !is_per_turn_cost {
         total_cost += peak_cost;
+    }
+
+    let usage_tokens = last_input + last_output + last_cache_read + last_cache_write;
+    if (!found_any || usage_tokens == 0) && fallback_tokens > 0 {
+        last_input = fallback_input;
+        last_output = fallback_output;
+        last_cache_read = fallback_cache_read;
+        last_cache_write = fallback_cache_write;
+        if last_num_turns == 0 {
+            last_num_turns = fallback_user_turns;
+        }
+        if total_cost == 0.0 && fallback_has_actual_usage {
+            let model = fallback_model(meta_model.as_deref(), observed_model.as_deref());
+            total_cost = crate::pricing::estimate_cost(
+                &model,
+                last_input,
+                last_output,
+                last_cache_read,
+                last_cache_write,
+            );
+        }
+    } else if last_num_turns == 0 && fallback_user_turns > 0 {
+        last_num_turns = fallback_user_turns;
+    }
+
+    if last_model_usage.is_empty()
+        && last_input + last_output + last_cache_read + last_cache_write > 0
+    {
+        let model = fallback_model(meta_model.as_deref(), observed_model.as_deref());
+        last_model_usage.insert(
+            model,
+            ModelUsageSummary {
+                input_tokens: last_input,
+                output_tokens: last_output,
+                cache_read_tokens: last_cache_read,
+                cache_write_tokens: last_cache_write,
+                cost_usd: total_cost,
+            },
+        );
     }
 
     log::debug!(
@@ -552,6 +655,96 @@ pub fn extract_run_usage(run_id: &str) -> Option<RawRunUsage> {
         num_turns: last_num_turns,
         model_usage: last_model_usage,
     })
+}
+
+fn read_run_meta_string(run_id: &str, key: &str) -> Option<String> {
+    let meta_path = super::run_dir(run_id).join("meta.json");
+    if !meta_path.exists() {
+        return None;
+    }
+    fs::read_to_string(&meta_path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|v| v.get(key).and_then(|s| s.as_str()).map(String::from))
+}
+
+fn fallback_model(meta_model: Option<&str>, observed_model: Option<&str>) -> String {
+    observed_model
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| meta_model.filter(|m| !m.trim().is_empty()))
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn usage_u64(value: &serde_json::Value, keys: &[&str]) -> u64 {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|v| v.as_u64()))
+        .unwrap_or(0)
+}
+
+fn usage_counts_from_value(value: &serde_json::Value) -> (u64, u64, u64, u64) {
+    let prompt_details = value
+        .get("prompt_tokens_details")
+        .or_else(|| value.get("promptTokensDetails"));
+    let cache_read = usage_u64(
+        value,
+        &[
+            "cache_read_tokens",
+            "cache_read_input_tokens",
+            "cacheReadInputTokens",
+        ],
+    )
+    .max(
+        prompt_details
+            .map(|v| usage_u64(v, &["cached_tokens", "cachedTokens"]))
+            .unwrap_or(0),
+    );
+
+    (
+        usage_u64(
+            value,
+            &[
+                "input_tokens",
+                "inputTokens",
+                "prompt_tokens",
+                "promptTokens",
+            ],
+        ),
+        usage_u64(
+            value,
+            &[
+                "output_tokens",
+                "outputTokens",
+                "completion_tokens",
+                "completionTokens",
+            ],
+        ),
+        cache_read,
+        usage_u64(
+            value,
+            &[
+                "cache_write_tokens",
+                "cache_creation_input_tokens",
+                "cacheCreationInputTokens",
+            ],
+        ),
+    )
+}
+
+fn estimate_tokens_from_text(text: &str) -> u64 {
+    let mut ascii_chars = 0u64;
+    let mut non_ascii_chars = 0u64;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        if ch.is_ascii() {
+            ascii_chars += 1;
+        } else {
+            non_ascii_chars += 1;
+        }
+    }
+    ((ascii_chars as f64 / 4.0) + (non_ascii_chars as f64 * 0.8)).ceil() as u64
 }
 
 /// Count user_message events in events.jsonl for resume baseline.

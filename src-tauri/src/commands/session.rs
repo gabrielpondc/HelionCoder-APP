@@ -343,7 +343,7 @@ async fn preflight_check_base_url(
 /// then returns ResolvedAuth matching the credential's auth_env_var.
 /// Falls back to global `resolve_auth_env()` if platform_id is None or credential not found.
 ///
-/// For keyless local proxies (ccswitch, ccr, ollama): uses PROXY_MANAGED placeholder token
+/// For keyless local proxies (ccr, ollama): uses PROXY_MANAGED placeholder token
 /// with known defaults for base_url and auth_env_var.
 ///
 /// For SSH remote sessions:
@@ -2349,40 +2349,40 @@ mod tests {
     #[test]
     fn key_optional_no_credential_uses_defaults() {
         let settings = default_user_settings();
-        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccswitch"));
+        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccr"));
 
         assert_eq!(resolved.auth_token.as_deref(), Some("PROXY_MANAGED"));
         assert!(resolved.api_key.is_none());
-        assert_eq!(resolved.base_url.as_deref(), Some("http://127.0.0.1:15721"));
+        assert_eq!(resolved.base_url.as_deref(), Some("http://127.0.0.1:3456"));
     }
 
     #[test]
     fn key_optional_credential_empty_key_with_base_url() {
         let mut settings = default_user_settings();
         settings.platform_credentials.push(make_cred(
-            "ccswitch",
+            "ccr",
             None,
-            Some("http://custom:15721"),
+            Some("http://custom:3456"),
             Some("ANTHROPIC_AUTH_TOKEN"),
         ));
 
-        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccswitch"));
+        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccr"));
 
         assert_eq!(resolved.auth_token.as_deref(), Some("PROXY_MANAGED"));
-        assert_eq!(resolved.base_url.as_deref(), Some("http://custom:15721"));
+        assert_eq!(resolved.base_url.as_deref(), Some("http://custom:3456"));
     }
 
     #[test]
     fn key_optional_credential_has_key_uses_key() {
         let mut settings = default_user_settings();
         settings.platform_credentials.push(make_cred(
-            "ccswitch",
+            "ccr",
             Some("real-key-123"),
-            Some("http://127.0.0.1:15721"),
+            Some("http://127.0.0.1:3456"),
             Some("ANTHROPIC_AUTH_TOKEN"),
         ));
 
-        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccswitch"));
+        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccr"));
 
         assert_eq!(resolved.auth_token.as_deref(), Some("real-key-123"));
         assert!(resolved.api_key.is_none());
@@ -2420,13 +2420,13 @@ mod tests {
     fn key_optional_missing_auth_env_var_uses_defaults() {
         let mut settings = default_user_settings();
         settings.platform_credentials.push(make_cred(
-            "ccswitch",
+            "ccr",
             None,
-            Some("http://127.0.0.1:15721"),
+            Some("http://127.0.0.1:3456"),
             None, // auth_env_var missing
         ));
 
-        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccswitch"));
+        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccr"));
 
         assert_eq!(resolved.auth_token.as_deref(), Some("PROXY_MANAGED"));
         assert!(resolved.api_key.is_none());
@@ -2436,13 +2436,13 @@ mod tests {
     fn key_optional_wrong_auth_env_var_overridden_by_defaults() {
         let mut settings = default_user_settings();
         settings.platform_credentials.push(make_cred(
-            "ccswitch",
+            "ccr",
             None,
-            Some("http://127.0.0.1:15721"),
+            Some("http://127.0.0.1:3456"),
             Some("ANTHROPIC_API_KEY"), // wrong — defaults should override
         ));
 
-        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccswitch"));
+        let resolved = resolve_auth_env_for_platform(&None, &settings, Some("ccr"));
 
         assert_eq!(resolved.auth_token.as_deref(), Some("PROXY_MANAGED"));
         assert!(resolved.api_key.is_none());
@@ -2495,12 +2495,11 @@ mod tests {
     async fn preflight_unreachable_returns_error() {
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             // RFC 5737 TEST-NET — guaranteed non-routable
-            let result =
-                preflight_check_base_url(Some("http://192.0.2.1:1"), Some("ccswitch")).await;
+            let result = preflight_check_base_url(Some("http://192.0.2.1:1"), Some("ccr")).await;
             assert!(result.is_err());
             let err = result.unwrap_err();
             assert!(err.contains("unreachable"), "error: {}", err);
-            assert!(err.contains("CC Switch"), "error: {}", err);
+            assert!(err.contains("Helion Router"), "error: {}", err);
         });
         timeout.await.expect("test timed out");
     }
@@ -2520,7 +2519,7 @@ mod tests {
                 }
             });
             let url = format!("http://127.0.0.1:{}", port);
-            let result = preflight_check_base_url(Some(&url), Some("ccswitch")).await;
+            let result = preflight_check_base_url(Some(&url), Some("ccr")).await;
             assert!(result.is_ok(), "expected Ok, got: {:?}", result);
         });
         timeout.await.expect("test timed out");

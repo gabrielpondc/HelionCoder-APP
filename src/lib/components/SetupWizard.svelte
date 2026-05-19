@@ -4,10 +4,12 @@
     checkAuthStatus,
     detectInstallMethods,
     installHelioncoderCli,
+    listApiModels,
     runClaudeLogin,
     setCliApiConfig,
     updateUserSettings,
   } from "$lib/api";
+  import { loadCliInfo } from "$lib/stores";
   import type { InstallMethod, PlatformCredential, PlatformPreset } from "$lib/types";
   import { PLATFORM_PRESETS, PRESET_CATEGORIES } from "$lib/utils/platform-presets";
   import { dbg, dbgWarn } from "$lib/utils/debug";
@@ -282,6 +284,40 @@
     showKey = false;
   }
 
+  function cleanModelOptions(models: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const model of models) {
+      const trimmed = model.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(trimmed);
+    }
+    return result;
+  }
+
+  async function resolveModelOptions(effectiveBaseUrl: string): Promise<string[]> {
+    if (!selectedPlatform) return [];
+    const presetModels = cleanModelOptions(selectedPlatform.models ?? []);
+    const shouldFetch = !!effectiveBaseUrl || selectedPlatform.id !== "anthropic";
+    if (!shouldFetch) return presetModels;
+    try {
+      const result = await listApiModels(apiKey, effectiveBaseUrl || "");
+      const models = cleanModelOptions(result.models);
+      if (models.length > 0) {
+        return models;
+      }
+      if (result.error) {
+        dbgWarn("wizard", "model list returned no models", result.error);
+      }
+    } catch (e) {
+      dbgWarn("wizard", "model list fetch failed", e);
+    }
+    return presetModels;
+  }
+
   async function saveApiKey() {
     if (!selectedPlatform) return;
     saving = true;
@@ -290,7 +326,7 @@
     try {
       const effectiveBaseUrl =
         selectedPlatform.id === "custom" ? customBaseUrl : selectedPlatform.base_url;
-      const modelOptions = selectedPlatform.models ?? [];
+      const modelOptions = await resolveModelOptions(effectiveBaseUrl || "");
       const defaultModel = modelOptions[0] ?? "";
       const smallModel = modelOptions[1] ?? modelOptions[0] ?? "";
       const platformId =
@@ -305,6 +341,7 @@
       };
 
       await setCliApiConfig(apiKey, effectiveBaseUrl || "", defaultModel, smallModel, modelOptions);
+      await loadCliInfo(true);
 
       await updateUserSettings({
         auth_mode: "cli",
@@ -324,7 +361,13 @@
         platform: selectedPlatform.id,
         hasKey: !!apiKey,
         hasBaseUrl: !!effectiveBaseUrl,
+        modelCount: modelOptions.length,
       });
+      window.dispatchEvent(
+        new CustomEvent("helion:models-updated", {
+          detail: { platformId, models: modelOptions },
+        }),
+      );
 
       await completeOnboarding();
     } catch (e) {
@@ -830,7 +873,7 @@
 
             <button
               class="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-              disabled={saving || (selectedPlatform.id !== "ollama" && !apiKey)}
+              disabled={saving || (selectedPlatform.category !== "local" && !apiKey)}
               onclick={saveApiKey}
             >
               {#if saving}

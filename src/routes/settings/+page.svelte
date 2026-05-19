@@ -140,7 +140,9 @@
   let apiModelsLatencyMs = $state<number | null>(null);
   let apiModelsRequestId = $state(0);
   let cliApiConfigSaving = $state(false);
-  let modelLoadDisabled = $derived(!anthropicApiKey.trim() || apiModelsLoading);
+  let modelLoadDisabled = $derived(
+    apiModelsLoading || (!anthropicApiKey.trim() && !anthropicBaseUrl.trim()),
+  );
   // Derive effective auth env var (tracks platformCredentials + selectedPlatformId)
   let effectiveAuthEnvVar = $derived(
     findCredential(platformCredentials, selectedPlatformId ?? "")?.auth_env_var ||
@@ -838,8 +840,10 @@
     apiModels = cachedModels;
     apiModelsError = "";
     apiModelsLatencyMs = null;
-    selectedPlatformId = detectPlatformFromUrl(baseUrl, settings?.active_platform_id) ?? "anthropic";
-    if (selectedPlatformId) loadFieldsFromCredential(selectedPlatformId, { preserveCliValues: true });
+    selectedPlatformId =
+      detectPlatformFromUrl(baseUrl, settings?.active_platform_id) ?? "anthropic";
+    if (selectedPlatformId)
+      loadFieldsFromCredential(selectedPlatformId, { preserveCliValues: true });
   }
 
   // Lazy load CLI config when tab activates
@@ -951,8 +955,8 @@
   }
 
   /** Sync global fields from current display state and persist everything. */
-  function syncAndSave(platformId: string) {
-    saveGeneralPatch({
+  async function syncAndSave(platformId: string) {
+    await saveGeneralPatch({
       auth_mode: "cli",
       anthropic_api_key: null,
       anthropic_base_url: null,
@@ -989,14 +993,20 @@
         openaiApiKey: anthropicApiKey || undefined,
         primaryApiKey: anthropicApiKey || undefined,
         openaiBaseUrl: anthropicBaseUrl || undefined,
-        openaiModel: (modelSonnet || modelOpus) || undefined,
+        openaiModel: modelSonnet || modelOpus || undefined,
         openaiSmallModel: modelHaiku || undefined,
         openaiModelOptionsCache: options,
       };
       saveCurrentToCredential();
-      if (selectedPlatformId) syncAndSave(selectedPlatformId);
-      else saveGeneralPatch({ auth_mode: "cli" });
+      if (selectedPlatformId) await syncAndSave(selectedPlatformId);
+      else await saveGeneralPatch({ auth_mode: "cli" });
       authOverview = await api.getAuthOverview();
+      await loadCliInfo(true);
+      window.dispatchEvent(
+        new CustomEvent("helion:models-updated", {
+          detail: { platformId: selectedPlatformId ?? undefined, models: options },
+        }),
+      );
       generalSaved = true;
       setTimeout(() => (generalSaved = false), 1500);
     } catch (e) {
@@ -1008,8 +1018,7 @@
   }
 
   async function loadApiModels() {
-    const noKey = !anthropicApiKey.trim();
-    if (noKey) {
+    if (!anthropicApiKey.trim() && !anthropicBaseUrl.trim()) {
       apiModelsError = t("settings_apiTest_noKey");
       apiModels = [];
       apiModelsLatencyMs = null;
@@ -2398,7 +2407,9 @@
                     ? 'cursor-not-allowed text-muted-foreground/50'
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
                   disabled={modelLoadDisabled}
-                  title={!anthropicApiKey.trim() ? t("settings_apiTest_noKey") : ""}
+                  title={!anthropicApiKey.trim() && !anthropicBaseUrl.trim()
+                    ? t("settings_apiTest_noKey")
+                    : ""}
                   onclick={loadApiModels}
                 >
                   {#if apiModelsLoading}

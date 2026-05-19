@@ -270,13 +270,6 @@ fn known_provider_defaults(pid: &str) -> Option<ProviderDefaults> {
             key_optional: false,
             auth_env_var: None,
         }),
-        "ccswitch" => Some(ProviderDefaults {
-            base_url: Some("http://127.0.0.1:15721"),
-            models: None,
-            extra_env: None,
-            key_optional: true,
-            auth_env_var: Some("ANTHROPIC_AUTH_TOKEN"),
-        }),
         "ccr" => Some(ProviderDefaults {
             base_url: Some("http://127.0.0.1:3456"),
             models: Some(vec!["claude-sonnet-4-6".to_string()]),
@@ -793,14 +786,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_info_ccswitch() {
-        let info = get_provider_info("ccswitch").expect("ccswitch should have provider info");
-        assert!(info.key_optional);
-        assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:15721"));
-        assert_eq!(info.auth_env_var.as_deref(), Some("ANTHROPIC_AUTH_TOKEN"));
-    }
-
-    #[test]
     fn provider_info_ccr() {
         let info = get_provider_info("ccr").expect("ccr should have provider info");
         assert!(info.key_optional);
@@ -865,7 +850,6 @@ mod tests {
 
     #[test]
     fn is_key_optional_known_platforms() {
-        assert!(is_key_optional_platform("ccswitch"));
         assert!(is_key_optional_platform("ccr"));
         assert!(is_key_optional_platform("ollama"));
         assert!(!is_key_optional_platform("deepseek"));

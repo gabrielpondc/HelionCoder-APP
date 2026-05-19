@@ -18,8 +18,8 @@
   let heatmapDaily = $state<DailyAggregate[] | null>(null);
   let heatmapRequestId = 0;
 
-  /** "app" = HelionCoder runs only, "global" = all CLI sessions */
-  let scope = $state<"app" | "global">("global");
+  /** Both scopes read HelionCoder's own local run/events data; "global" is kept as a UI alias. */
+  let scope = $state<"app" | "global">("app");
 
   /** Monotonic counter to discard stale responses on rapid tab switching. */
   let requestId = 0;
@@ -38,7 +38,6 @@
     { label: "All", days: undefined as number | undefined },
   ];
 
-  // Default chart mode: "messages" for global, "cost" for app
   let chartMode = $state<"cost" | "tokens" | "messages" | "sessions">("messages");
 
   let maxDailyValue = $derived.by(() => {
@@ -171,10 +170,6 @@
 
   function selectScope(s: "app" | "global") {
     scope = s;
-    // Reset chart mode if current mode isn't available for this scope
-    if (s === "app" && (chartMode === "messages" || chartMode === "sessions")) {
-      chartMode = "cost";
-    }
     loadData(selectedDays);
     loadHeatmapData();
   }
@@ -412,30 +407,28 @@
           >
             {t("usage_chartTokens")}
           </button>
-          {#if scope === "global"}
-            <button
-              class="px-2 py-0.5 text-[10px] font-medium rounded transition-colors
-                {chartMode === 'messages'
-                ? 'bg-primary/20 text-primary'
-                : 'text-muted-foreground hover:text-foreground'}"
-              onclick={() => (chartMode = "messages")}
-            >
-              {t("usage_chartMessages")}
-            </button>
-            <button
-              class="px-2 py-0.5 text-[10px] font-medium rounded transition-colors
-                {chartMode === 'sessions'
-                ? 'bg-primary/20 text-primary'
-                : 'text-muted-foreground hover:text-foreground'}"
-              onclick={() => (chartMode = "sessions")}
-            >
-              {t("usage_chartSessions")}
-            </button>
-          {/if}
+          <button
+            class="px-2 py-0.5 text-[10px] font-medium rounded transition-colors
+              {chartMode === 'messages'
+              ? 'bg-primary/20 text-primary'
+              : 'text-muted-foreground hover:text-foreground'}"
+            onclick={() => (chartMode = "messages")}
+          >
+            {t("usage_chartMessages")}
+          </button>
+          <button
+            class="px-2 py-0.5 text-[10px] font-medium rounded transition-colors
+              {chartMode === 'sessions'
+              ? 'bg-primary/20 text-primary'
+              : 'text-muted-foreground hover:text-foreground'}"
+            onclick={() => (chartMode = "sessions")}
+          >
+            {t("usage_chartSessions")}
+          </button>
         </div>
       </div>
       {#if data.daily.length > 0}
-        {#if scope === "global" && chartMode === "tokens" && data.daily.some((d) => d.modelBreakdown)}
+        {#if chartMode === "tokens" && data.daily.some((d) => d.modelBreakdown)}
           <StackedModelChart daily={data.daily} />
         {:else}
           <div class="flex h-40">

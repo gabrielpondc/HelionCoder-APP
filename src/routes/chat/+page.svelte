@@ -1045,6 +1045,28 @@
     };
   });
 
+  onMount(() => {
+    const handler = async (event: Event) => {
+      const detail = (event as CustomEvent<{ platformId?: string; models?: string[] }>).detail;
+      try {
+        const [freshSettings] = await Promise.all([api.getUserSettings(), loadCliInfo(true)]);
+        settings = freshSettings;
+        store.platformId = detail?.platformId ?? freshSettings.active_platform_id ?? "anthropic";
+        const models = detail?.models?.map((m) => m.trim()).filter((m) => m.length > 0) ?? [];
+        if (models.length > 0 && store.platformId && !store.run && !runId) {
+          const nextModel = getStoredModelForPlatform(store.platformId, models) ?? models[0];
+          if (!store.model || !models.includes(store.model)) {
+            store.model = nextModel;
+          }
+        }
+      } catch (e) {
+        dbgWarn("chat", "models-updated refresh failed", e);
+      }
+    };
+    window.addEventListener("helion:models-updated", handler);
+    return () => window.removeEventListener("helion:models-updated", handler);
+  });
+
   let inputBlockedByPermission = $derived(store.hasPendingPermission || store.hasElicitation);
   let pendingToolPermissions = $derived(store.pendingToolPermissions);
   let showPermissionPanel = $derived(pendingToolPermissions.length > 0 && store.sessionAlive);
@@ -1408,11 +1430,10 @@
           store.remoteHostName = lastTarget;
         }
       }
-      // Initialize per-session platform from global active
-      // Only use active_platform_id in App API Key mode; CLI Auth manages its own connection
+      // Initialize per-session platform from global active. Auth still comes from
+      // CLI config, but the active platform drives model choices and run metadata.
       if (!store.platformId) {
-        store.platformId =
-          settings.auth_mode === "api" ? (settings.active_platform_id ?? "anthropic") : "anthropic";
+        store.platformId = settings.active_platform_id ?? "anthropic";
       }
       // Initialize model: for third-party platforms, use credential > preset default model
       // Only for new sessions — if runId is set, loadRun will handle model restoration.

@@ -1741,15 +1741,13 @@ export class SessionStore {
       // if the user changed settings without navigating away from chat.
       try {
         const freshSettings = await api.getUserSettings();
-        if (freshSettings.auth_mode === "api") {
-          const freshPid = freshSettings.active_platform_id ?? "anthropic";
-          if (freshPid !== this.platformId) {
-            dbg("store", "startSession: refreshing platformId", {
-              old: this.platformId,
-              new: freshPid,
-            });
-            this.platformId = freshPid;
-          }
+        const freshPid = freshSettings.active_platform_id ?? "anthropic";
+        if (freshPid !== this.platformId) {
+          dbg("store", "startSession: refreshing platformId", {
+            old: this.platformId,
+            new: freshPid,
+          });
+          this.platformId = freshPid;
         }
         // Settings stores app-internal names (auto_all, auto_read, etc.)
         // Store uses CLI names (bypassPermissions, acceptEdits, etc.)

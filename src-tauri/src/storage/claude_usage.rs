@@ -49,7 +49,7 @@ struct TokenCounts {
 
 // ── Disk cache types ──
 
-const DISK_CACHE_VERSION: u32 = 1;
+const DISK_CACHE_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct DiskCache {
@@ -406,8 +406,14 @@ fn scan_single_jsonl_standalone(path: &Path) -> FileData {
             }
         }
 
-        // Fast filter for token usage data
-        if !line.contains("\"cache_read_input_tokens\"") {
+        // Fast filter for token usage data. Some OpenAI-compatible/custom
+        // providers only write input/output tokens and omit Claude cache fields.
+        if !line.contains("\"usage\"")
+            || !(line.contains("\"input_tokens\"")
+                || line.contains("\"output_tokens\"")
+                || line.contains("\"cache_read_input_tokens\"")
+                || line.contains("\"cache_creation_input_tokens\""))
+        {
             continue;
         }
 
@@ -424,10 +430,21 @@ fn scan_single_jsonl_standalone(path: &Path) -> FileData {
             Some(u) => u,
             None => continue,
         };
-        let model = match message.model {
-            Some(m) if !m.is_empty() => m,
-            _ => continue,
-        };
+        let model = message.model.filter(|m| !m.is_empty()).unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        });
+
+        if usage.input_tokens
+            + usage.output_tokens
+            + usage.cache_read_input_tokens
+            + usage.cache_creation_input_tokens
+            == 0
+        {
+            continue;
+        }
 
         if parsed.timestamp.len() < 10 {
             continue;
@@ -523,6 +540,9 @@ fn build_overview(data: &CachedData, days: Option<u32>) -> UsageOverview {
         all_dates.insert(date.as_str(), ());
     }
     for date in data.daily_activity.keys() {
+        all_dates.insert(date.as_str(), ());
+    }
+    for date in data.scan_activity.keys() {
         all_dates.insert(date.as_str(), ());
     }
 
@@ -652,8 +672,10 @@ fn build_overview(data: &CachedData, days: Option<u32>) -> UsageOverview {
     // ── Summary ──
     let total_sessions = if days.is_some() {
         filtered_sessions
-    } else {
+    } else if data.total_sessions > 0 {
         data.total_sessions
+    } else {
+        filtered_sessions
     };
 
     let avg_cost = if total_sessions > 0 {

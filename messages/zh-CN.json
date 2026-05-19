@@ -46,7 +46,6 @@
   "settings_local_viewDocs": "查看文档",
   "settings_local_refresh": "刷新",
   "settings_local_advanced": "高级设置",
-  "settings_local_setupHint_ccswitch": "打开 CC Switch → 设置 → 启用「Proxy Enabled」开关，然后选择一个 Provider",
   "settings_local_setupHint_ccr": "运行 \"ccr start\" 仅启动路由服务（请勿使用 \"ccr code\"）。安装：npm i -g @musistudio/claude-code-router",
   "settings_local_setupHint_ollama": "运行 \"ollama serve\" 启动 Ollama 服务",
   "settings_apiTest": "测试",

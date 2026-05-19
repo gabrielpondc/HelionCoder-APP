@@ -21,7 +21,9 @@ fn parse_started_date_utc(started_at: &str) -> Option<chrono::NaiveDate> {
 #[tauri::command]
 pub fn get_global_usage_overview(days: Option<u32>) -> Result<UsageOverview, String> {
     log::debug!("[stats] get_global_usage_overview: days={:?}", days);
-    storage::claude_usage::read_global_usage(days)
+    let mut overview = get_usage_overview(days)?;
+    overview.scan_mode = Some("helion".to_string());
+    Ok(overview)
 }
 
 /// Per-model aggregate builder (internal, not serialized).
@@ -42,6 +44,8 @@ struct DailyBuilder {
     runs: u32,
     input_tokens: u64,
     output_tokens: u64,
+    message_count: u32,
+    session_count: u32,
 }
 
 #[tauri::command]
@@ -75,8 +79,16 @@ pub fn get_usage_overview(days: Option<u32>) -> Result<UsageOverview, String> {
             }
         }
 
-        // Extract usage from events.jsonl
+        // Extract usage from HelionCoder's own events.jsonl. For custom providers
+        // without usage_update, this falls back to message usage or text estimates.
         let usage = storage::events::extract_run_usage(&meta.id);
+        let (total_user_messages, normal_user_messages) =
+            storage::events::count_user_messages(&meta.id);
+        let message_count = usage
+            .as_ref()
+            .map(|u| u.num_turns.saturating_mul(2).min(u32::MAX as u64) as u32)
+            .unwrap_or_else(|| normal_user_messages.saturating_mul(2))
+            .max(total_user_messages);
 
         let cost = usage.as_ref().map(|u| u.total_cost_usd).unwrap_or(0.0);
         // total_tokens = input + output (billable tokens only, not cache)
@@ -108,6 +120,8 @@ pub fn get_usage_overview(days: Option<u32>) -> Result<UsageOverview, String> {
         day.runs += 1;
         day.input_tokens += usage.as_ref().map(|u| u.input_tokens).unwrap_or(0);
         day.output_tokens += usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+        day.message_count = day.message_count.saturating_add(message_count);
+        day.session_count = day.session_count.saturating_add(1);
 
         // Build run summary (merge RunMeta + RawRunUsage)
         let name = meta.name.clone().unwrap_or_else(|| {
@@ -186,8 +200,8 @@ pub fn get_usage_overview(days: Option<u32>) -> Result<UsageOverview, String> {
             runs: d.runs,
             input_tokens: d.input_tokens,
             output_tokens: d.output_tokens,
-            message_count: None,
-            session_count: None,
+            message_count: Some(d.message_count),
+            session_count: Some(d.session_count),
             tool_call_count: None,
             model_breakdown: None,
         })
@@ -233,6 +247,8 @@ struct HeatmapDayBuilder {
     runs: u32,
     input_tokens: u64,
     output_tokens: u64,
+    message_count: u32,
+    session_count: u32,
 }
 
 /// Strip model_breakdown, sort by date ascending, truncate to at most 365 entries.
@@ -268,10 +284,19 @@ fn get_app_heatmap_daily() -> Result<Vec<DailyAggregate>, String> {
         let date = d.format("%Y-%m-%d").to_string();
         let day = daily_map.entry(date).or_default();
         let usage = storage::events::extract_run_usage(&meta.id);
+        let (total_user_messages, normal_user_messages) =
+            storage::events::count_user_messages(&meta.id);
+        let message_count = usage
+            .as_ref()
+            .map(|u| u.num_turns.saturating_mul(2).min(u32::MAX as u64) as u32)
+            .unwrap_or_else(|| normal_user_messages.saturating_mul(2))
+            .max(total_user_messages);
         day.cost_usd += usage.as_ref().map(|u| u.total_cost_usd).unwrap_or(0.0);
         day.runs += 1;
         day.input_tokens += usage.as_ref().map(|u| u.input_tokens).unwrap_or(0);
         day.output_tokens += usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+        day.message_count = day.message_count.saturating_add(message_count);
+        day.session_count = day.session_count.saturating_add(1);
     }
 
     Ok(daily_map
@@ -282,8 +307,8 @@ fn get_app_heatmap_daily() -> Result<Vec<DailyAggregate>, String> {
             runs: d.runs,
             input_tokens: d.input_tokens,
             output_tokens: d.output_tokens,
-            message_count: None,
-            session_count: None,
+            message_count: Some(d.message_count),
+            session_count: Some(d.session_count),
             tool_call_count: None,
             model_breakdown: None,
         })
@@ -294,11 +319,7 @@ fn get_app_heatmap_daily() -> Result<Vec<DailyAggregate>, String> {
 pub fn get_heatmap_daily(scope: String) -> Result<Vec<DailyAggregate>, String> {
     log::debug!("[stats] get_heatmap_daily: scope={}", scope);
     let raw = match scope.as_str() {
-        "global" => {
-            let overview = storage::claude_usage::read_global_usage(Some(365))?;
-            overview.daily
-        }
-        "app" => get_app_heatmap_daily()?,
+        "global" | "app" => get_app_heatmap_daily()?,
         _ => return Err(format!("invalid scope: {}", scope)),
     };
     Ok(prepare_heatmap_daily(raw))

@@ -593,8 +593,7 @@ pub(crate) fn preset_name(pid: &str) -> String {
         "siliconflow" => "SiliconFlow (硅基流动)",
         "aihubmix" => "AiHubMix",
         "ollama" => "Ollama",
-        "ccswitch" => "CC Switch",
-        "ccr" => "Claude Code Router",
+        "ccr" => "Helion Router",
         "zenmux" => "ZenMux",
         "custom" => "Custom",
         _ => return pid.to_string(),
@@ -749,8 +748,7 @@ mod tests {
     #[test]
     fn preset_name_key_platforms() {
         // Guard against drift from frontend platform-presets.ts
-        assert_eq!(preset_name("ccswitch"), "CC Switch");
-        assert_eq!(preset_name("ccr"), "Claude Code Router");
+        assert_eq!(preset_name("ccr"), "Helion Router");
         assert_eq!(preset_name("zhipu-intl"), "Zhipu (智谱 Intl)");
         assert_eq!(preset_name("minimax-cn"), "MiniMax (China)");
         assert_eq!(preset_name("zenmux"), "ZenMux");
