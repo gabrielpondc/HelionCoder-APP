@@ -20,9 +20,15 @@ export const MAX_CONVERTED_CHARS = 200_000;
  * @throws User-friendly error message on failure
  */
 export async function convertFile(file: File): Promise<{ text: string; format: string }> {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   const arrayBuffer = await file.arrayBuffer();
+  return convertArrayBuffer(file.name, arrayBuffer);
+}
 
+export async function convertArrayBuffer(
+  filename: string,
+  arrayBuffer: ArrayBuffer,
+): Promise<{ text: string; format: string }> {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   let text: string;
   if (ext === "docx") {
     text = await convertDocx(arrayBuffer);

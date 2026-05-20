@@ -11,6 +11,8 @@ const FILE_TOOL_NAMES: Record<string, FileEntry["action"]> = {
   NotebookEdit: "edit",
 };
 
+const OFFICE_OUTPUT_EXT_RE = /\.(docx|pptx|xlsx)$/i;
+
 /** Extract file path from tool input (different tools use different field names) */
 function extractPath(input: Record<string, unknown>): string | null {
   for (const key of ["file_path", "path", "filename", "notebook_path"]) {
@@ -19,12 +21,48 @@ function extractPath(input: Record<string, unknown>): string | null {
   return null;
 }
 
+function cleanupMentionedPath(path: string): string | null {
+  const cleaned = path
+    .trim()
+    .replace(/^[<([\s]+/, "")
+    .replace(/[>\]),.;:\s]+$/, "");
+  if (!OFFICE_OUTPUT_EXT_RE.test(cleaned)) return null;
+  return cleaned;
+}
+
+/** Extract generated Office file paths mentioned by the assistant. */
+export function extractOfficePathMentions(text: string): FileEntry[] {
+  const entries: FileEntry[] = [];
+  const seen = new Set<string>();
+  const patterns = [
+    /`([^`\n]+\.(?:docx|pptx|xlsx))`/gi,
+    /"([^"\n]+\.(?:docx|pptx|xlsx))"/gi,
+    /'([^'\n]+\.(?:docx|pptx|xlsx))'/gi,
+    /((?:[A-Za-z]:\\|\/)[^\n`"']+?\.(?:docx|pptx|xlsx))/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const path = cleanupMentionedPath(match[1] ?? "");
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      entries.push({ path, action: "persisted" });
+    }
+  }
+
+  return entries;
+}
+
 /** Extract file entries from timeline (stream-json mode) */
 export function extractFilesFromTimeline(timeline: TimelineEntry[]): FileEntry[] {
   const result: FileEntry[] = [];
 
   function walk(entries: TimelineEntry[], isTopLevel: boolean): void {
     for (const entry of entries) {
+      if (entry.kind === "assistant" || entry.kind === "command_output") {
+        result.push(...extractOfficePathMentions(entry.content));
+        continue;
+      }
       if (entry.kind !== "tool") continue;
       const action = FILE_TOOL_NAMES[entry.tool.tool_name];
       if (!action) {

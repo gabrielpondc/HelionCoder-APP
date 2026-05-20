@@ -25,6 +25,7 @@
     type EditedFileSummary,
     type EditedFilesSummary,
   } from "$lib/utils/edit-summary";
+  import { getExtension, isOfficePreviewable } from "$lib/utils/preview-ext";
   import { extractTaskToolMeta, type TaskToolMeta } from "$lib/utils/tool-rendering";
   import type { TaskNotificationItem } from "$lib/stores/session-store.svelte";
 
@@ -57,6 +58,7 @@
     cwd = "",
     runId = "",
     isRemote = false,
+    appMode = "code",
     requestedPreviewPath = $bindable(null as string | null),
     requestedPreviewMode = $bindable(null as PreviewMode | null),
   }: {
@@ -79,6 +81,8 @@
     runId?: string;
     /** Remote run flag — disables file preview (file APIs are local-only). */
     isRemote?: boolean;
+    /** Current app mode. Cowork mode auto-opens generated Office previews. */
+    appMode?: string;
     /** External request to open preview for a path (auto-switches to files tab). */
     requestedPreviewPath?: string | null;
     /** External request for preview vs git diff mode. */
@@ -135,6 +139,10 @@
   function openPreview(path: string) {
     previewPath = path;
     previewMode = "preview";
+  }
+
+  function isOfficePath(path: string): boolean {
+    return isOfficePreviewable(getExtension(path));
   }
 
   function openDiff(path: string) {
@@ -306,7 +314,10 @@
     const rect = asideEl?.getBoundingClientRect();
     if (!rect) return false;
     const inPanel =
-      clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom;
     const inRightGap =
       clientX >= rect.right &&
       clientX <= window.innerWidth &&
@@ -553,7 +564,8 @@
     return `${Math.floor(ms / 1000)}s`;
   }
 
-  let useTimeline = $derived(panelWorkEnabled && timeline.some((e) => e.kind === "tool"));
+  let fileTrackingEnabled = $derived(panelWorkEnabled || appMode === "cowork");
+  let useTimeline = $derived(fileTrackingEnabled && timeline.length > 0);
 
   // ── Turn grouping (timeline mode) ──
 
@@ -616,12 +628,12 @@
 
   // ── HookEvent fallback (pipe/PTY mode) ──
 
-  let hookToolEvents = $derived(panelWorkEnabled ? tools.filter((e) => e.tool_name) : []);
+  let hookToolEvents = $derived(fileTrackingEnabled ? tools.filter((e) => e.tool_name) : []);
 
   // ── File entries (dual-source + persisted merge) ──
 
   let fileEntries: FileEntry[] = $derived.by(() => {
-    if (!panelWorkEnabled) return [];
+    if (!fileTrackingEnabled) return [];
     const timelineFiles = useTimeline
       ? extractFilesFromTimeline(timeline)
       : extractFilesFromHooks(hookToolEvents);
@@ -630,6 +642,24 @@
       { entries: timelineFiles, hasTemporalOrder: true },
       { entries: persistedEntries, hasTemporalOrder: false },
     );
+  });
+
+  let lastAutoOfficePreviewKey = "";
+  $effect(() => {
+    if (appMode !== "cowork" || isRemote) return;
+    const officeEntry = fileEntries.find(
+      (entry) => entry.action !== "read" && isOfficePath(entry.path),
+    );
+    if (!officeEntry) return;
+    const key = `${runId}:${officeEntry.path}:${officeEntry.action}:${fileEntries.length}`;
+    if (key === lastAutoOfficePreviewKey) return;
+    lastAutoOfficePreviewKey = key;
+    previewPath = officeEntry.path;
+    previewMode = "preview";
+    activeTab = "files";
+    if (collapsed && !pinned && compactMode !== "hidden") {
+      lockedExpanded = true;
+    }
   });
   let editedSummary = $derived(
     panelWorkEnabled ? summarizeEditedFiles(timeline) : EMPTY_EDITED_SUMMARY,

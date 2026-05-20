@@ -35,6 +35,8 @@ export interface TaskRun {
   result_subtype?: string;
   /** Model used in this run (persisted on hot-switch). */
   model?: string;
+  /** App-level mode used to create this run. */
+  app_mode?: "chat" | "cowork" | "code" | string;
   /** The run_id this session was forked from. */
   parent_run_id?: string;
   /** User-assigned display name. */

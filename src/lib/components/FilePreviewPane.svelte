@@ -6,7 +6,14 @@
   import CodeEditor from "$lib/components/CodeEditor.svelte";
   import HighlightedCode from "$lib/components/HighlightedCode.svelte";
   import MarkdownContent from "$lib/components/MarkdownContent.svelte";
-  import { classifyPath, getExtension, isImage, isPreviewable } from "$lib/utils/preview-ext";
+  import { convertArrayBuffer } from "$lib/utils/file-convert";
+  import {
+    classifyPath,
+    getExtension,
+    isImage,
+    isOfficePreviewable,
+    isPreviewable,
+  } from "$lib/utils/preview-ext";
 
   // ── Props ──
   let {
@@ -52,6 +59,7 @@
 
   /** Files larger than this are not auto-previewed (CodeMirror init becomes very slow). */
   const MAX_PREVIEW_SIZE = 1_000_000; // 1MB
+  const MAX_OFFICE_PREVIEW_SIZE = 25 * 1024 * 1024; // 25MB
 
   let diffContent = $state("");
   let diffLoading = $state(false);
@@ -107,7 +115,7 @@
     fileTooLarge = false;
     fileSize = 0;
     const ext = getExtension(p);
-    editorMode = isPreviewable(ext) ? "rendered" : "edit";
+    editorMode = isPreviewable(ext) || isOfficePreviewable(ext) ? "rendered" : "edit";
     fileLoading = true;
     fileDirty = false;
     imageDataUrl = "";
@@ -119,6 +127,38 @@
         imageDataUrl = `data:${mime};base64,${base64}`;
         fileContent = "";
         originalContent = "";
+      } else if (isOfficePreviewable(ext)) {
+        let preReadSize: number | null = null;
+        try {
+          preReadSize = await statTextFile(p, c);
+          if (seq !== loadSeq) return;
+        } catch (e) {
+          dbg("preview-pane", "office stat failed, falling through to read", {
+            path: p,
+            err: String(e),
+          });
+        }
+        if (preReadSize !== null && preReadSize > MAX_OFFICE_PREVIEW_SIZE) {
+          fileSize = preReadSize;
+          fileTooLarge = true;
+          fileContent = "";
+          originalContent = "";
+        } else {
+          const [base64] = await readFileBase64(p, c);
+          if (seq !== loadSeq) return;
+          const buffer = base64ToArrayBuffer(base64);
+          fileSize = buffer.byteLength;
+          if (fileSize > MAX_OFFICE_PREVIEW_SIZE) {
+            fileTooLarge = true;
+            fileContent = "";
+            originalContent = "";
+          } else {
+            const converted = await convertArrayBuffer(displayName || p, buffer);
+            if (seq !== loadSeq) return;
+            fileContent = converted.text;
+            originalContent = converted.text;
+          }
+        }
       } else {
         // Stat first (cheap metadata) so multi-MB files don't pay readTextFile's full
         // disk-read + IPC + JS string allocation cost just to be discarded by the size guard.
@@ -208,6 +248,15 @@
     }
   }
 
+  function base64ToArrayBuffer(base64: string): ArrayBuffer {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
   // ── Reactive load ──
   // Svelte 5: read all reactive props inside the effect to register dependency tracking.
   $effect(() => {
@@ -283,7 +332,7 @@
       !fileError &&
       !fileTooLarge &&
       kind !== "image" &&
-      !(editorMode === "rendered" && kind === "markdown"),
+      !(editorMode === "rendered" && (kind === "markdown" || kind === "office")),
   );
 </script>
 
@@ -529,7 +578,7 @@
           class="max-w-full max-h-full object-contain rounded"
         />
       </div>
-    {:else if editorMode === "rendered" && kind === "markdown"}
+    {:else if editorMode === "rendered" && (kind === "markdown" || kind === "office")}
       <div class="absolute inset-0 overflow-y-auto p-4 bg-background">
         {#if fileContent}
           <MarkdownContent text={fileContent} basePath={path.replace(/[/\\][^/\\]*$/, "")} />

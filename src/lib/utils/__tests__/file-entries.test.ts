@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractFilesFromTimeline,
   extractFilesFromHooks,
+  extractOfficePathMentions,
   extractFilesFromPersisted,
   mergeFileEntries,
 } from "../file-entries";
@@ -89,6 +90,54 @@ describe("extractFilesFromTimeline", () => {
     ];
     const result = extractFilesFromTimeline(timeline);
     expect(result).toHaveLength(0);
+  });
+
+  it("extracts Office output paths mentioned by assistant messages", () => {
+    const timeline: TimelineEntry[] = [
+      {
+        kind: "assistant",
+        id: "a1",
+        anchorId: "a1",
+        ts: new Date().toISOString(),
+        content: "已生成：`/Users/me/Documents/Quarterly deck.pptx` 和 `C:\\Users\\me\\model.xlsx`",
+      },
+    ];
+    const result = extractFilesFromTimeline(timeline);
+    expect(result).toEqual([
+      { path: "/Users/me/Documents/Quarterly deck.pptx", action: "persisted" },
+      { path: "C:\\Users\\me\\model.xlsx", action: "persisted" },
+    ]);
+  });
+
+  it("extracts Office output paths printed by command output", () => {
+    const timeline: TimelineEntry[] = [
+      {
+        kind: "command_output",
+        id: "cmd1",
+        anchorId: "cmd1",
+        ts: new Date().toISOString(),
+        content: "saved to /tmp/meeting-notes.docx",
+      },
+    ];
+    const result = extractFilesFromTimeline(timeline);
+    expect(result).toEqual([{ path: "/tmp/meeting-notes.docx", action: "persisted" }]);
+  });
+});
+
+describe("extractOfficePathMentions", () => {
+  it("extracts backtick, quoted, and plain absolute Office paths", () => {
+    const result = extractOfficePathMentions(
+      'Files: `/tmp/a.docx`, "/tmp/b.pptx", and /tmp/c.xlsx.',
+    );
+    expect(result.map((entry) => entry.path)).toEqual([
+      "/tmp/a.docx",
+      "/tmp/b.pptx",
+      "/tmp/c.xlsx",
+    ]);
+  });
+
+  it("ignores non-Office paths", () => {
+    expect(extractOfficePathMentions("See `/tmp/a.md` and `/tmp/b.pdf`")).toHaveLength(0);
   });
 });
 

@@ -1731,6 +1731,7 @@ export class SessionStore {
     cwd: string,
     attachments: Attachment[],
     permissionModeOverride?: string,
+    appMode?: string,
   ): Promise<string> {
     this.error = "";
     this._setPhase("spawning");
@@ -1791,6 +1792,8 @@ export class SessionStore {
         this.remoteHostName || undefined,
         this.platformId || undefined,
         executionPath,
+        undefined,
+        appMode,
       );
       this.run = run;
 

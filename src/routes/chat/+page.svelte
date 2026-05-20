@@ -318,7 +318,12 @@
     return saved === "chat" || saved === "cowork" || saved === "code" ? saved : "code";
   }
 
+  function normalizeAppMode(value?: string | null): AppMode | null {
+    return value === "chat" || value === "cowork" || value === "code" ? value : null;
+  }
+
   let appMode = $state<AppMode>(loadAppMode());
+  let activeAppMode = $derived(normalizeAppMode(store.run?.app_mode) ?? appMode);
   const FALLBACK_WORKSPACE_TOOLS: api.WorkspaceTool[] = [
     { id: "vscode", name: "VS Code", available: true, source: null },
     { id: "editor", name: "Default Editor", available: true, source: null },
@@ -2364,7 +2369,7 @@
           slashCmdSeenRunning = false;
         }
 
-        const runId = await store.startSession(text, cwd, attachments);
+        const runId = await store.startSession(text, cwd, attachments, undefined, appMode);
         goto(`/chat?run=${runId}`, { replaceState: true });
         window.dispatchEvent(new Event("ocv:runs-changed"));
         // Re-detect CLI version on new session (picks up external updates)
@@ -4074,7 +4079,7 @@
       const planPrompt = `Implement the following plan:\n\n${planContent}`;
       await goto("/chat", { replaceState: true });
       await tick(); // let runId effect run loadRun("") → store.reset()
-      const newRunId = await store.startSession(planPrompt, cwd, [], "acceptEdits");
+      const newRunId = await store.startSession(planPrompt, cwd, [], "acceptEdits", appMode);
       await goto(`/chat?run=${newRunId}`, { replaceState: true });
       dbg("chat", "ExitPlanMode: new session started", { newRunId });
     } catch (e) {
@@ -5413,6 +5418,7 @@
     cwd={store.effectiveCwd}
     runId={store.run?.id ?? ""}
     isRemote={store.isRemote}
+    appMode={activeAppMode}
     bind:requestedPreviewPath
     bind:requestedPreviewMode
   />
