@@ -1185,6 +1185,36 @@ pub async fn dispatch_command(
                 .get("force_refresh")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let remote_host_name = params
+                .get("remote_host_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from);
+            if let Some(remote_name) = remote_host_name.as_deref() {
+                let settings = crate::storage::settings::get_user_settings();
+                let Some(remote) = settings
+                    .remote_hosts
+                    .iter()
+                    .find(|host| host.name == remote_name)
+                    .cloned()
+                else {
+                    return Err(format!("Remote host '{}' not found", remote_name));
+                };
+                return match crate::agent::control::get_remote_cli_info(&remote).await {
+                    Ok(info) => serde_json::to_value(info).map_err(|e| e.to_string()),
+                    Err(e) => {
+                        log::warn!(
+                            "[dispatch] remote CLI info failed for {} ({}): {}, using remote-safe fallback",
+                            remote_name,
+                            e.code,
+                            e.message
+                        );
+                        let mut fallback = crate::agent::control::fallback_cli_info();
+                        fallback.current_model = None;
+                        serde_json::to_value(fallback).map_err(|e| e.to_string())
+                    }
+                };
+            }
             match crate::agent::control::get_cli_info(&state.cli_info_cache, force).await {
                 Ok(info) => serde_json::to_value(info).map_err(|e| e.to_string()),
                 Err(e) => {

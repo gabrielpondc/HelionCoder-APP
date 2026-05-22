@@ -1,5 +1,7 @@
 use crate::agent::claude_stream::{augmented_path, try_resolve_claude_path};
-use crate::models::{now_iso, CliAccount, CliCommand, CliInfo, CliInfoError, CliModelInfo};
+use crate::models::{
+    now_iso, CliAccount, CliCommand, CliInfo, CliInfoError, CliModelInfo, RemoteHost,
+};
 use crate::process_ext::HideConsole;
 use serde_json::Value;
 use std::sync::Arc;
@@ -159,6 +161,89 @@ pub async fn get_cli_info(cache: &CliInfoCache, force: bool) -> Result<CliInfo, 
     Ok(cli_info)
 }
 
+/// Get CLI info by launching HelionCoder on a configured remote host over SSH.
+///
+/// Remote info is intentionally not stored in the local CLI cache; different
+/// hosts can expose different model lists and active settings.
+pub async fn get_remote_cli_info(remote: &RemoteHost) -> Result<CliInfo, CliInfoError> {
+    let init_request = serde_json::json!({
+        "type": "control_request",
+        "request_id": "ocv_remote_init_1",
+        "request": { "subtype": "initialize" }
+    });
+    let init_line = serde_json::to_string(&init_request).map_err(|e| CliInfoError {
+        code: "protocol_error".to_string(),
+        message: format!("Failed to serialize request: {}", e),
+    })?;
+
+    let cli_expr = remote
+        .remote_claude_path
+        .as_deref()
+        .map(crate::agent::ssh::shell_escape_path)
+        .unwrap_or_else(|| "\"$(command -v helion-coder || command -v helioncoder)\"".to_string());
+    let args = [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--input-format",
+        "stream-json",
+        "--verbose",
+    ]
+    .iter()
+    .map(|arg| crate::agent::ssh::shell_escape(arg))
+    .collect::<Vec<_>>()
+    .join(" ");
+    let remote_cmd = format!(
+        "cd ~ && printf '%s\\n' {} | {} {}",
+        crate::agent::ssh::shell_escape(&init_line),
+        cli_expr,
+        args
+    );
+
+    let mut cmd = crate::agent::ssh::build_ssh_command(remote, &remote_cmd);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .hide_console()
+        .kill_on_drop(true);
+
+    let mut child = cmd.spawn().map_err(|e| CliInfoError {
+        code: "ssh_spawn_failed".to_string(),
+        message: format!("Failed to spawn ssh: {}", e),
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| CliInfoError {
+        code: "protocol_error".to_string(),
+        message: "Failed to capture remote stdout".to_string(),
+    })?;
+
+    let result = timeout(PROCESS_TIMEOUT, read_control_response(stdout)).await;
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+
+    let mut cli_info = match result {
+        Ok(Ok(info)) => info,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(CliInfoError {
+                code: "timeout".to_string(),
+                message: format!(
+                    "Timed out after {}s waiting for remote CLI response",
+                    PROCESS_TIMEOUT.as_secs()
+                ),
+            });
+        }
+    };
+
+    cli_info.current_model = read_remote_helioncoder_settings_model(remote).await;
+    log::debug!(
+        "[control] remote {} got {} models, current_model={:?}",
+        remote.name,
+        cli_info.models.len(),
+        cli_info.current_model
+    );
+
+    Ok(cli_info)
+}
+
 /// Read stdout lines looking for a control_response event.
 async fn read_control_response(
     stdout: tokio::process::ChildStdout,
@@ -271,6 +356,43 @@ fn read_helioncoder_settings_model() -> Option<String> {
     }
     log::debug!("[control] read current model from {:?}: {:?}", path, model);
     Some(model.to_string())
+}
+
+async fn read_remote_helioncoder_settings_model(remote: &RemoteHost) -> Option<String> {
+    let python = r#"import json, os
+try:
+    with open(os.path.expanduser("~/.helioncoder/settings.json"), "r", encoding="utf-8") as f:
+        model = json.load(f).get("model")
+    print(model if isinstance(model, str) else "")
+except Exception:
+    pass
+"#;
+    let sed_script = r#"s/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p"#;
+    let remote_cmd = format!(
+        "if command -v python3 >/dev/null 2>&1; then python3 -c {}; else sed -n {} \"$HOME/.helioncoder/settings.json\" 2>/dev/null | head -n1; fi",
+        crate::agent::ssh::shell_escape(python),
+        crate::agent::ssh::shell_escape(sed_script)
+    );
+
+    let mut cmd = crate::agent::ssh::build_ssh_command(remote, &remote_cmd);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .hide_console()
+        .kill_on_drop(true);
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(5), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if model.is_empty() {
+        None
+    } else {
+        Some(model)
+    }
 }
 
 /// Fallback model list when CLI is unavailable.

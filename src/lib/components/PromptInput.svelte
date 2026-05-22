@@ -460,10 +460,12 @@
   }
 
   function selectModelFromDropdown(model: string) {
+    modelDropdownOpen = false;
     onModelSwitch?.(model);
   }
 
   function selectEffortFromDropdown(nextEffort: string) {
+    modelDropdownOpen = false;
     onEffortChange?.(nextEffort);
   }
 

@@ -505,10 +505,16 @@ export async function testRemoteHost(
 }
 
 // CLI Control Protocol
-export async function getCliInfo(forceRefresh?: boolean): Promise<CliInfo> {
-  dbg("api", "getCliInfo", { forceRefresh });
+export async function getCliInfo(
+  forceRefresh?: boolean,
+  remoteHostName?: string | null,
+): Promise<CliInfo> {
+  dbg("api", "getCliInfo", { forceRefresh, remoteHostName });
   try {
-    const info = await invoke<CliInfo>("get_cli_info", { forceRefresh });
+    const info = await invoke<CliInfo>("get_cli_info", {
+      forceRefresh,
+      remoteHostName: remoteHostName ?? null,
+    });
     dbg("api", "getCliInfo →", { models: info.models.length });
     return info;
   } catch (e) {

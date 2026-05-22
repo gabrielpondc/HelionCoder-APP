@@ -25,6 +25,7 @@
     HelionUsageStats,
     AgentSettings,
     SessionMode,
+    CliInfo,
     CliModelInfo,
     GitSummary,
     ScreenshotPayload,
@@ -383,10 +384,18 @@
           "",
   );
   let promptWorkspaceSummary = $derived(appMode === "chat" ? null : workspaceGitSummary);
+  let remoteCliInfo = $state<CliInfo | null>(null);
+  let remoteCliInfoHost = $state<string | null>(null);
+  let remoteCliInfoGen = 0;
+  let activeCliCommands = $derived(
+    store.remoteHostName && remoteCliInfoHost === store.remoteHostName
+      ? (remoteCliInfo?.commands ?? [])
+      : getCliCommands(),
+  );
   let promptCommands = $derived(
     store.sessionInitReceived && store.sessionCommands.length > 0
       ? store.sessionCommands
-      : mergeProjectCommands(getCliCommands(), projectCommands),
+      : mergeProjectCommands(activeCliCommands, projectCommands),
   );
   let promptAgents = $derived(
     preloadedAgents.map((a) => ({ name: a.name, description: a.description })),
@@ -762,8 +771,68 @@
     }));
   });
 
-  let effectiveModels = $derived(platformModels.length > 0 ? platformModels : getCliModels());
+  let activeCliModels = $derived(
+    store.remoteHostName && remoteCliInfoHost === store.remoteHostName
+      ? (remoteCliInfo?.models ?? [])
+      : getCliModels(),
+  );
+  let effectiveModels = $derived(platformModels.length > 0 ? platformModels : activeCliModels);
   let currentEffort = $state("");
+
+  function applyLocalCliModel() {
+    if (store.run || runId || store.phase === "loading") return;
+    const isThirdParty = store.platformId && store.platformId !== "anthropic";
+    if (isThirdParty) return;
+    const localModel =
+      getCliCurrentModel() || settings?.default_model || lastKnownGoodAnthropicModel || "";
+    if (localModel) {
+      dbg("chat", "target local: restoring local model", { model: localModel });
+      store.model = localModel;
+    }
+  }
+
+  async function loadRemoteTargetCliInfo(hostName: string) {
+    const gen = ++remoteCliInfoGen;
+    try {
+      const info = await api.getCliInfo(true, hostName);
+      if (gen !== remoteCliInfoGen || store.remoteHostName !== hostName) return;
+      remoteCliInfo = info;
+      remoteCliInfoHost = hostName;
+      const isThirdParty = store.platformId && store.platformId !== "anthropic";
+      if (!store.run && !runId && store.phase !== "loading" && !isThirdParty) {
+        const remoteModel = info.current_model || info.models[0]?.value || "";
+        if (remoteModel) {
+          dbg("chat", "target remote: applying remote model", { hostName, model: remoteModel });
+          store.model = remoteModel;
+        }
+      }
+    } catch (e) {
+      if (gen !== remoteCliInfoGen) return;
+      dbgWarn("chat", "failed to load remote CLI info", { hostName, error: e });
+      remoteCliInfo = null;
+      remoteCliInfoHost = hostName;
+    }
+  }
+
+  function selectTarget(hostName: string | null) {
+    store.remoteHostName = hostName;
+    setLastTarget(hostName);
+    dbg("chat", "target changed", hostName ?? "local");
+    targetDropdownOpen = false;
+    if (!hostName) applyLocalCliModel();
+  }
+
+  $effect(() => {
+    const hostName = store.remoteHostName;
+    if (hostName) {
+      void loadRemoteTargetCliInfo(hostName);
+    } else {
+      remoteCliInfoGen++;
+      remoteCliInfo = null;
+      remoteCliInfoHost = null;
+      applyLocalCliModel();
+    }
+  });
 
   // Effort guard: auto-clear effort when model doesn't support it;
   // also auto-populate default effort ("high") when empty and model supports it.
@@ -1550,11 +1619,18 @@
       const cliModel = getCliCurrentModel();
       const isThirdParty = store.platformId && store.platformId !== "anthropic";
       // Update lastKnownGoodAnthropicModel when CLI model is available
-      if (cliModel && !isThirdParty) {
+      if (cliModel && !isThirdParty && !store.remoteHostName) {
         lastKnownGoodAnthropicModel = cliModel;
       }
       // Only for genuinely new chats: no run loaded/loading, no URL run param
-      if (cliModel && !store.run && !runId && store.phase !== "loading" && !isThirdParty) {
+      if (
+        cliModel &&
+        !store.remoteHostName &&
+        !store.run &&
+        !runId &&
+        store.phase !== "loading" &&
+        !isThirdParty
+      ) {
         dbg("chat", "set model from CLI after loadCliInfo", { cliModel, prev: store.model });
         store.model = cliModel;
       }
@@ -2746,6 +2822,7 @@
     setStoredModelForPlatform(store.platformId, newModel);
 
     const isThirdParty = store.platformId && store.platformId !== "anthropic";
+    const isRemoteTarget = !!store.remoteHostName;
 
     // Try a hot-switch for active sessions. Some providers/CLI versions accept this,
     // while others only apply the stored model on the next spawn.
@@ -2770,8 +2847,10 @@
       });
     }
 
-    // Only persist default_model for Anthropic — third-party models managed per-credential
-    if (!isThirdParty) {
+    // Only persist local default_model for local Anthropic sessions.
+    // Remote targets read their own ~/.helioncoder/settings.json and receive
+    // the selected model as the session's explicit model override.
+    if (!isThirdParty && !isRemoteTarget) {
       lastKnownGoodAnthropicModel = newModel;
       try {
         await api.updateUserSettings({ default_model: newModel });
@@ -3101,7 +3180,7 @@
       const allCmds = mergeWithVirtual(
         store.sessionInitReceived && store.sessionCommands.length > 0
           ? store.sessionCommands
-          : mergeProjectCommands(getCliCommands(), projectCommands),
+          : mergeProjectCommands(activeCliCommands, projectCommands),
       );
       const skillSet = new Set(store.availableSkills);
       appendCommandOutput(buildHelpText(allCmds, skillSet));
@@ -4224,12 +4303,7 @@
             class="flex w-full items-center gap-1.5 px-3 py-1.5 text-xs {!store.remoteHostName
               ? 'text-foreground font-medium'
               : 'text-foreground/70 hover:bg-accent'} transition-colors"
-            onclick={() => {
-              store.remoteHostName = null;
-              setLastTarget(null);
-              dbg("chat", "target changed", "local");
-              targetDropdownOpen = false;
-            }}
+            onclick={() => selectTarget(null)}
           >
             {t("chat_local")}
           </button>
@@ -4239,12 +4313,7 @@
               host.name
                 ? 'text-foreground font-medium'
                 : 'text-foreground/70 hover:bg-accent'} transition-colors"
-              onclick={() => {
-                store.remoteHostName = host.name;
-                setLastTarget(host.name);
-                dbg("chat", "target changed", host.name);
-                targetDropdownOpen = false;
-              }}
+              onclick={() => selectTarget(host.name)}
             >
               {host.name} ({host.user}@{host.host})
             </button>
