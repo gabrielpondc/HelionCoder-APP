@@ -4544,6 +4544,7 @@
                         }}
                       />
                     </div>
+                    {@render heroMetaFooter()}
                   </div>
                   <div
                     class="mt-5 w-full divide-y divide-border/70 text-left text-sm text-muted-foreground"
