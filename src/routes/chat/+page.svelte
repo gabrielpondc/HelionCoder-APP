@@ -209,6 +209,22 @@
     return `ocv:selected-model:${platformId || "anthropic"}`;
   }
 
+  function remoteModelStorageKey(hostName: string, platformId?: string | null): string {
+    return `ocv:selected-model:remote:${hostName}:${platformId || "anthropic"}`;
+  }
+
+  function uniqueModelList(models: readonly CliModelInfo[]): CliModelInfo[] {
+    const seen = new Set<string>();
+    const result: CliModelInfo[] = [];
+    for (const model of models) {
+      const key = model.value?.trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      result.push(model);
+    }
+    return result;
+  }
+
   function getStoredModelForPlatform(
     platformId: string | null | undefined,
     models?: readonly string[],
@@ -222,6 +238,26 @@
   function setStoredModelForPlatform(platformId: string | null | undefined, model: string) {
     if (typeof localStorage === "undefined" || !model.trim()) return;
     localStorage.setItem(modelStorageKey(platformId), model.trim());
+  }
+
+  function getStoredModelForRemote(
+    hostName: string,
+    platformId: string | null | undefined,
+    models?: readonly string[],
+  ): string | undefined {
+    if (typeof localStorage === "undefined") return undefined;
+    const stored = localStorage.getItem(remoteModelStorageKey(hostName, platformId))?.trim();
+    if (!stored) return undefined;
+    return !models || models.length === 0 || models.includes(stored) ? stored : undefined;
+  }
+
+  function setStoredModelForRemote(
+    hostName: string,
+    platformId: string | null | undefined,
+    model: string,
+  ) {
+    if (typeof localStorage === "undefined" || !model.trim()) return;
+    localStorage.setItem(remoteModelStorageKey(hostName, platformId), model.trim());
   }
 
   // ── Project init detection ──
@@ -764,17 +800,19 @@
     const preset = PLATFORM_PRESETS.find((p) => p.id === pid);
     const models = cred?.models?.length ? cred.models : preset?.models;
     if (!models?.length) return [];
-    return models.map((m, i) => ({
-      value: m,
-      displayName: m,
-      description: i === 0 ? "Default" : "",
-    }));
+    return uniqueModelList(
+      models.map((m, i) => ({
+        value: m,
+        displayName: m,
+        description: i === 0 ? "Default" : "",
+      })),
+    );
   });
 
   let activeCliModels = $derived(
     store.remoteHostName && remoteCliInfoHost === store.remoteHostName
-      ? (remoteCliInfo?.models ?? [])
-      : getCliModels(),
+      ? uniqueModelList(remoteCliInfo?.models ?? [])
+      : uniqueModelList(getCliModels()),
   );
   let effectiveModels = $derived(platformModels.length > 0 ? platformModels : activeCliModels);
   let currentEffort = $state("");
@@ -796,11 +834,20 @@
     try {
       const info = await api.getCliInfo(true, hostName);
       if (gen !== remoteCliInfoGen || store.remoteHostName !== hostName) return;
-      remoteCliInfo = info;
+      const dedupedInfo = { ...info, models: uniqueModelList(info.models) };
+      remoteCliInfo = dedupedInfo;
       remoteCliInfoHost = hostName;
       const isThirdParty = store.platformId && store.platformId !== "anthropic";
       if (!store.run && !runId && store.phase !== "loading" && !isThirdParty) {
-        const remoteModel = info.current_model || info.models[0]?.value || "";
+        const remoteModel =
+          getStoredModelForRemote(
+            hostName,
+            store.platformId,
+            dedupedInfo.models.map((m) => m.value),
+          ) ||
+          dedupedInfo.current_model ||
+          dedupedInfo.models[0]?.value ||
+          "";
         if (remoteModel) {
           dbg("chat", "target remote: applying remote model", { hostName, model: remoteModel });
           store.model = remoteModel;
@@ -845,21 +892,26 @@
 
     const modelInfo = effectiveModels.find((m) => m.value === store.model);
     if (!modelInfo) return; // models not loaded yet
+    const isRemoteTarget = !!store.remoteHostName;
 
     if (currentEffort && modelInfo.supportsEffort === false) {
       // Model doesn't support effort → clear
       dbg("chat", "effort-guard: clearing for unsupported model", { model: store.model });
       currentEffort = "";
-      api.updateCliConfig({ effortLevel: null }).catch((e) => {
-        dbgWarn("chat", "effort-guard: CLI config clear failed", e);
-      });
+      if (!isRemoteTarget) {
+        api.updateCliConfig({ effortLevel: null }).catch((e) => {
+          dbgWarn("chat", "effort-guard: CLI config clear failed", e);
+        });
+      }
     } else if (!currentEffort && modelInfo.supportsEffort === true) {
       // No effort set but model supports it → default to "high" (CLI default)
       dbg("chat", "effort-guard: defaulting to high", { model: store.model });
       currentEffort = "high";
-      api.updateCliConfig({ effortLevel: "high" }).catch((e) => {
-        dbgWarn("chat", "effort-guard: CLI config default failed", e);
-      });
+      if (!isRemoteTarget) {
+        api.updateCliConfig({ effortLevel: "high" }).catch((e) => {
+          dbgWarn("chat", "effort-guard: CLI config default failed", e);
+        });
+      }
     }
   });
 
@@ -2819,14 +2871,18 @@
   async function handleModelChange(newModel: string) {
     dbg("chat", "model change", { from: store.model, to: newModel });
     store.model = newModel;
-    setStoredModelForPlatform(store.platformId, newModel);
 
     const isThirdParty = store.platformId && store.platformId !== "anthropic";
     const isRemoteTarget = !!store.remoteHostName;
+    if (isRemoteTarget && store.remoteHostName) {
+      setStoredModelForRemote(store.remoteHostName, store.platformId, newModel);
+    } else {
+      setStoredModelForPlatform(store.platformId, newModel);
+    }
 
     // Try a hot-switch for active sessions. Some providers/CLI versions accept this,
     // while others only apply the stored model on the next spawn.
-    if (store.sessionAlive && store.run) {
+    if (store.sessionAlive && store.run && !isRemoteTarget) {
       try {
         await api.sendSessionControl(store.run.id, "set_model", { model: newModel });
         dbg("chat", "model hot-switched via control protocol");
@@ -2838,6 +2894,12 @@
             : "Model saved; this session will use it after reconnecting or starting a new chat",
         );
       }
+    } else if (store.sessionAlive && store.run && isRemoteTarget) {
+      showChatToast(
+        currentLocale().startsWith("zh")
+          ? "已选择远程模型；当前远程会话不会热切换，会在下一次启动时使用"
+          : "Remote model selected; it will be used the next time the remote session starts",
+      );
     }
 
     // Persist model to run meta (per-run model memory)
@@ -2863,6 +2925,7 @@
   async function handleEffortChange(newEffort: string) {
     dbg("chat", "effort change", { from: currentEffort, to: newEffort });
     currentEffort = newEffort;
+    if (store.remoteHostName) return;
     // Write to CLI config (~/.claude/settings.json) — the CLI reads effortLevel
     // per-request, so changes take effect immediately within a running session.
     // Deliberately NOT writing to agentSettings.effort — that would cause --effort

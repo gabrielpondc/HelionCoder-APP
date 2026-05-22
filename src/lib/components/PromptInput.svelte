@@ -3016,7 +3016,7 @@
       </div>
       <div class="max-h-56 overflow-y-auto p-1">
         {#if models.length > 0}
-          {#each models as model (model.value)}
+          {#each models as model, i (model.value + ":" + i)}
             <button
               type="button"
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-accent {currentModel ===
