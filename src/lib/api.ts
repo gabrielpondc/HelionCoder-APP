@@ -488,6 +488,8 @@ export async function testRemoteHost(
   user: string,
   port?: number,
   keyPath?: string,
+  password?: string,
+  authMethod?: "key" | "password",
   remoteClaudePath?: string,
 ): Promise<RemoteTestResult> {
   dbg("api", "testRemoteHost", { host, user, port });
@@ -496,6 +498,8 @@ export async function testRemoteHost(
     user,
     port: port ?? null,
     keyPath: keyPath ?? null,
+    password: password ?? null,
+    authMethod: authMethod ?? null,
     remoteClaudePath: remoteClaudePath ?? null,
   });
 }

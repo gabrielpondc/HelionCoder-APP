@@ -74,7 +74,19 @@ fn resolve_remote_host(meta: &RunMeta) -> Result<Option<RemoteHost>, String> {
             "[session] resolve_remote_host: using snapshot for '{}'",
             snapshot.name
         );
-        return Ok(Some(snapshot.clone()));
+        let mut remote = snapshot.clone();
+        if remote.auth_method == "password" && remote.password.is_none() {
+            let settings = storage::settings::get_user_settings();
+            if let Some(current) = settings
+                .remote_hosts
+                .iter()
+                .find(|h| h.name == remote.name)
+                .and_then(|h| h.password.clone())
+            {
+                remote.password = Some(current);
+            }
+        }
+        return Ok(Some(remote));
     }
     // Fallback: name-based lookup (old runs without snapshot)
     match &meta.remote_host_name {

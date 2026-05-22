@@ -2655,7 +2655,7 @@
           <button
             class="text-xs text-muted-foreground hover:text-muted-foreground transition-colors cursor-pointer"
             onclick={() => (showAbout = true)}
-            title="About HelionCoder">v0.5.0</button
+            title="About HelionCoder">v0.5.1</button
           >
         </div>
         <div class="relative mx-auto mb-0.5">

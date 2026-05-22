@@ -3,6 +3,7 @@
     checkAgentCli,
     checkAuthStatus,
     detectInstallMethods,
+    getCliDistTags,
     installHelioncoderCli,
     listApiModels,
     runClaudeLogin,
@@ -36,6 +37,7 @@
   let cliInstallAttempted = $state(false);
   let cliInstallStatus = $state<"idle" | "running" | "success" | "failed">("idle");
   let cliInstallError = $state("");
+  let cliLatestVersion = $state<string | null>(null);
 
   // Copy button state: method id → "copy" | "copied"
   let copyStates = $state<Record<string, string>>({});
@@ -58,7 +60,6 @@
 
   // Done state
   let doneTimer = $state<ReturnType<typeof setTimeout> | null>(null);
-  const HELION_CLI_VERSION = "0.5.0";
 
   // Start checking on mount
   $effect(() => {
@@ -105,12 +106,23 @@
   }
 
   async function loadInstallMethods() {
-    try {
-      installMethods = await detectInstallMethods();
+    const [methodsResult, tagsResult] = await Promise.allSettled([
+      detectInstallMethods(),
+      getCliDistTags(),
+    ]);
+    if (methodsResult.status === "fulfilled") {
+      installMethods = methodsResult.value;
       dbg("wizard", "install methods", installMethods);
-    } catch (e) {
-      dbgWarn("wizard", "detect methods error", e);
+    } else {
+      dbgWarn("wizard", "detect methods error", methodsResult.reason);
       installMethods = [];
+    }
+    if (tagsResult.status === "fulfilled") {
+      cliLatestVersion = tagsResult.value.latest ?? tagsResult.value.stable ?? null;
+      dbg("wizard", "CLI dist tags", tagsResult.value);
+    } else {
+      dbgWarn("wizard", "CLI dist tags error", tagsResult.reason);
+      cliLatestVersion = null;
     }
   }
 
@@ -162,7 +174,7 @@
         unlistenReplace();
       };
 
-      const success = await installHelioncoderCli(HELION_CLI_VERSION);
+      const success = await installHelioncoderCli(cliLatestVersion ?? undefined);
       if (!success) {
         cliInstallStatus = "failed";
         cliInstallError = t("setup_installFailedDesc");
@@ -397,12 +409,10 @@
 
   const UNIX_INSTALL_LATEST =
     "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh";
-  const UNIX_INSTALL_VERSION = `curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh -s -- ${HELION_CLI_VERSION}`;
   const UNIX_UNINSTALL =
     "curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/uninstall.sh | sh";
   const WINDOWS_INSTALL_LATEST =
     "iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex";
-  const WINDOWS_INSTALL_VERSION = `$env:HELION_VERSION="${HELION_CLI_VERSION}"; iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex`;
   const WINDOWS_UNINSTALL =
     "iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/uninstall.ps1 -UseB | iex";
 
@@ -413,17 +423,31 @@
       installMethods[0]?.command ??
       (IS_WINDOWS ? WINDOWS_INSTALL_LATEST : UNIX_INSTALL_LATEST),
   );
+  let cliLatestLabel = $derived(
+    cliLatestVersion ? `v${cliLatestVersion}` : t("setup_latestCliVersion"),
+  );
+  let detectedVersionInstallCommand = $derived(
+    cliLatestVersion
+      ? IS_WINDOWS
+        ? `$env:HELION_VERSION="${cliLatestVersion}"; iwr https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.ps1 -UseB | iex`
+        : `curl -fsSL https://raw.githubusercontent.com/gabrielpondc/HelionCoder/main/scripts/install.sh | sh -s -- ${cliLatestVersion}`
+      : fallbackInstallCommand,
+  );
   let manualCommands = $derived([
     {
       id: "install-latest",
       label: t("setup_installLatest"),
       command: fallbackInstallCommand,
     },
-    {
-      id: "install-version",
-      label: t("setup_installVersion"),
-      command: IS_WINDOWS ? WINDOWS_INSTALL_VERSION : UNIX_INSTALL_VERSION,
-    },
+    ...(cliLatestVersion
+      ? [
+          {
+            id: "install-version",
+            label: t("setup_installVersion", { version: cliLatestLabel }),
+            command: detectedVersionInstallCommand,
+          },
+        ]
+      : []),
     {
       id: "verify-install",
       label: t("setup_verifyInstall"),
@@ -514,7 +538,9 @@
                   >
                 {/if}
               </div>
-              <p class="mt-1 text-xs text-muted-foreground">{t("setup_autoInstallDesc")}</p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                {t("setup_autoInstallDesc", { version: cliLatestLabel })}
+              </p>
 
               {#if installProgress.length > 0}
                 <div

@@ -288,7 +288,10 @@
   let remoteFormHost = $state("");
   let remoteFormUser = $state("");
   let remoteFormPort = $state(22);
+  let remoteFormAuthMethod = $state<"key" | "password">("key");
   let remoteFormKeyPath = $state("");
+  let remoteFormPassword = $state("");
+  let remoteShowPassword = $state(false);
   let remoteFormRemoteCwd = $state("");
   let remoteFormClaudePath = $state("");
   let remoteFormForwardKey = $state(false);
@@ -303,7 +306,10 @@
     remoteFormHost = "";
     remoteFormUser = "";
     remoteFormPort = 22;
+    remoteFormAuthMethod = "key";
     remoteFormKeyPath = "";
+    remoteFormPassword = "";
+    remoteShowPassword = false;
     remoteFormRemoteCwd = "";
     remoteFormClaudePath = "";
     remoteFormForwardKey = false;
@@ -317,7 +323,10 @@
     remoteFormHost = host.host;
     remoteFormUser = host.user;
     remoteFormPort = host.port;
+    remoteFormAuthMethod = host.auth_method ?? (host.password ? "password" : "key");
     remoteFormKeyPath = host.key_path ?? "";
+    remoteFormPassword = host.password ?? "";
+    remoteShowPassword = false;
     remoteFormRemoteCwd = host.remote_cwd ?? "";
     remoteFormClaudePath = host.remote_claude_path ?? "";
     remoteFormForwardKey = host.forward_api_key;
@@ -325,7 +334,12 @@
   }
 
   async function saveRemoteHost(keepForm = false) {
-    if (!remoteFormName.trim() || !remoteFormHost.trim() || !remoteFormUser.trim()) {
+    if (
+      !remoteFormName.trim() ||
+      !remoteFormHost.trim() ||
+      !remoteFormUser.trim() ||
+      (remoteFormAuthMethod === "password" && !remoteFormPassword.trim())
+    ) {
       remoteFormTouched = true;
       return;
     }
@@ -336,7 +350,11 @@
         host: remoteFormHost.trim(),
         user: remoteFormUser.trim(),
         port: remoteFormPort || 22,
-        key_path: remoteFormKeyPath.trim() || undefined,
+        auth_method: remoteFormAuthMethod,
+        key_path:
+          remoteFormAuthMethod === "key" ? remoteFormKeyPath.trim() || undefined : undefined,
+        password:
+          remoteFormAuthMethod === "password" ? remoteFormPassword.trim() || undefined : undefined,
         remote_cwd: remoteFormRemoteCwd.trim() || undefined,
         remote_claude_path: remoteFormClaudePath.trim() || undefined,
         forward_api_key: remoteFormForwardKey,
@@ -379,7 +397,11 @@
   let remoteFormTouched = $state(false);
 
   async function testRemoteConnection() {
-    if (!remoteFormHost.trim() || !remoteFormUser.trim()) {
+    if (
+      !remoteFormHost.trim() ||
+      !remoteFormUser.trim() ||
+      (remoteFormAuthMethod === "password" && !remoteFormPassword.trim())
+    ) {
       remoteFormTouched = true;
       return;
     }
@@ -390,7 +412,9 @@
         remoteFormHost.trim(),
         remoteFormUser.trim(),
         remoteFormPort || undefined,
-        remoteFormKeyPath.trim() || undefined,
+        remoteFormAuthMethod === "key" ? remoteFormKeyPath.trim() || undefined : undefined,
+        remoteFormAuthMethod === "password" ? remoteFormPassword : undefined,
+        remoteFormAuthMethod,
         remoteFormClaudePath.trim() || undefined,
       );
       dbg("settings", "remote test result", remoteTestResult);
@@ -514,10 +538,13 @@
         remoteFormUser.trim(),
         remoteFormPort || undefined,
         wizardKeyPath || undefined,
+        undefined,
+        "key",
         remoteFormClaudePath.trim() || undefined,
       );
       dbg("settings", "ssh verify result", result);
       if (result.ssh_ok) {
+        remoteFormAuthMethod = "key";
         remoteFormKeyPath = wizardKeyPath;
         sshKeyStep = "done";
       } else {
@@ -2859,6 +2886,9 @@
                   <p class="text-sm font-medium">{host.name}</p>
                   <p class="text-xs text-muted-foreground">
                     {host.user}@{host.host}{host.port !== 22 ? `:${host.port}` : ""}
+                    · {host.auth_method === "password"
+                      ? t("settings_remote_authMethod_password")
+                      : t("settings_remote_authMethod_key")}
                   </p>
                   {#if host.remote_cwd}
                     <p class="text-xs text-muted-foreground">cwd: {host.remote_cwd}</p>
@@ -2946,123 +2976,107 @@
             </label>
             <div class="col-span-2">
               <span class="text-xs text-muted-foreground block mb-1"
-                >{t("settings_remote_keyPath")}</span
+                >{t("settings_remote_authMethod")}</span
               >
-              <div class="flex gap-2">
-                <input
-                  type="text"
-                  aria-label={t("settings_remote_keyPath")}
-                  bind:value={remoteFormKeyPath}
-                  placeholder="~/.ssh/id_ed25519"
-                  class="flex-1 text-sm px-2 py-1.5 rounded border border-input bg-background"
-                />
-                {#if sshKeyStep === "idle"}
-                  <button
-                    class="shrink-0 text-xs px-2 py-1.5 rounded border border-input hover:bg-accent transition-colors text-muted-foreground"
-                    onclick={startSshKeyWizard}
-                  >
-                    {t("settings_remote_setupSshKey")}
-                  </button>
-                {/if}
+              <div class="inline-flex rounded-md border border-input bg-background p-0.5">
+                <button
+                  type="button"
+                  class="rounded px-3 py-1.5 text-xs transition-colors {remoteFormAuthMethod ===
+                  'key'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                  onclick={() => {
+                    remoteFormAuthMethod = "key";
+                    remoteTestResult = null;
+                  }}
+                >
+                  {t("settings_remote_authMethod_key")}
+                </button>
+                <button
+                  type="button"
+                  class="rounded px-3 py-1.5 text-xs transition-colors {remoteFormAuthMethod ===
+                  'password'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                  onclick={() => {
+                    remoteFormAuthMethod = "password";
+                    closeSshWizard();
+                    remoteTestResult = null;
+                  }}
+                >
+                  {t("settings_remote_authMethod_password")}
+                </button>
               </div>
-
-              <!-- SSH Key Wizard inline panel -->
-              {#if sshKeyStep !== "idle"}
-                <div class="mt-2 rounded-lg border border-border p-3 space-y-2 text-xs bg-muted/30">
-                  {#if sshKeyStep === "checking"}
-                    <div class="flex items-center gap-2 text-muted-foreground">
-                      <div
-                        class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent"
-                      ></div>
-                      {t("settings_remote_sshKeyChecking")}
-                    </div>
-                  {:else if sshKeyStep === "no_key"}
-                    <p class="text-muted-foreground">{t("settings_remote_sshKeyNotFound")}</p>
+            </div>
+            {#if remoteFormAuthMethod === "key"}
+              <div class="col-span-2">
+                <span class="text-xs text-muted-foreground block mb-1"
+                  >{t("settings_remote_keyPath")}</span
+                >
+                <div class="flex gap-2">
+                  <input
+                    type="text"
+                    aria-label={t("settings_remote_keyPath")}
+                    bind:value={remoteFormKeyPath}
+                    placeholder="~/.ssh/id_ed25519"
+                    class="flex-1 text-sm px-2 py-1.5 rounded border border-input bg-background"
+                  />
+                  {#if sshKeyStep === "idle"}
                     <button
-                      class="rounded border px-3 py-1.5 text-xs hover:bg-accent transition-colors"
-                      onclick={generateSshKey}
+                      class="shrink-0 text-xs px-2 py-1.5 rounded border border-input hover:bg-accent transition-colors text-muted-foreground"
+                      onclick={startSshKeyWizard}
                     >
-                      {t("settings_remote_sshKeyGenerate")}
+                      {t("settings_remote_setupSshKey")}
                     </button>
-                  {:else if sshKeyStep === "generating"}
-                    <div class="flex items-center gap-2 text-muted-foreground">
-                      <div
-                        class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent"
-                      ></div>
-                      {t("settings_remote_sshKeyGenerating")}
-                    </div>
-                  {:else if sshKeyStep === "pub_missing" && sshKeyInfo}
-                    <p class="text-amber-400">
-                      {t(
-                        IS_WINDOWS
-                          ? "settings_remote_sshKeyPubMissing_win"
-                          : "settings_remote_sshKeyPubMissing",
-                      )}
-                    </p>
-                    <div class="flex items-center gap-2">
-                      <code
-                        class="flex-1 rounded bg-muted px-2 py-1.5 font-mono text-[11px] break-all select-all"
-                      >
-                        {buildRebuildPubKeyCommand(sshKeyInfo)}
-                      </code>
+                  {/if}
+                </div>
+
+                <!-- SSH Key Wizard inline panel -->
+                {#if sshKeyStep !== "idle"}
+                  <div
+                    class="mt-2 rounded-lg border border-border p-3 space-y-2 text-xs bg-muted/30"
+                  >
+                    {#if sshKeyStep === "checking"}
+                      <div class="flex items-center gap-2 text-muted-foreground">
+                        <div
+                          class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                        ></div>
+                        {t("settings_remote_sshKeyChecking")}
+                      </div>
+                    {:else if sshKeyStep === "no_key"}
+                      <p class="text-muted-foreground">{t("settings_remote_sshKeyNotFound")}</p>
                       <button
-                        class="shrink-0 rounded border px-2 py-1 text-[10px] hover:bg-accent transition-colors"
-                        onclick={async () => {
-                          await navigator.clipboard.writeText(
-                            buildRebuildPubKeyCommand(sshKeyInfo!),
-                          );
-                          sshCopied = true;
-                          setTimeout(() => (sshCopied = false), 2000);
-                        }}
+                        class="rounded border px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+                        onclick={generateSshKey}
                       >
-                        {sshCopied ? t("settings_remote_sshKeyCopied") : t("common_copy")}
+                        {t("settings_remote_sshKeyGenerate")}
                       </button>
-                    </div>
-                    <p class="text-muted-foreground text-[10px]">
-                      After running the command, click "Setup SSH Key" again.
-                    </p>
-                    <button
-                      class="text-[10px] text-muted-foreground hover:underline"
-                      onclick={closeSshWizard}
-                    >
-                      {t("settings_remote_sshKeyClose")}
-                    </button>
-                  {:else if sshKeyStep === "has_key" && sshKeyInfo}
-                    <p class="text-emerald-500">
-                      {t("settings_remote_sshKeyFound", { keyType: sshKeyInfo.key_type })}
-                      <span class="text-muted-foreground ml-1 font-mono">{sshKeyInfo.key_path}</span
-                      >
-                    </p>
-
-                    {#if remoteFormHost && remoteFormUser}
-                      <p class="text-muted-foreground">
+                    {:else if sshKeyStep === "generating"}
+                      <div class="flex items-center gap-2 text-muted-foreground">
+                        <div
+                          class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                        ></div>
+                        {t("settings_remote_sshKeyGenerating")}
+                      </div>
+                    {:else if sshKeyStep === "pub_missing" && sshKeyInfo}
+                      <p class="text-amber-400">
                         {t(
                           IS_WINDOWS
-                            ? "settings_remote_sshKeyCopyCmd_win"
-                            : "settings_remote_sshKeyCopyCmd",
+                            ? "settings_remote_sshKeyPubMissing_win"
+                            : "settings_remote_sshKeyPubMissing",
                         )}
                       </p>
                       <div class="flex items-center gap-2">
                         <code
                           class="flex-1 rounded bg-muted px-2 py-1.5 font-mono text-[11px] break-all select-all"
                         >
-                          {buildCopyCommand(
-                            sshKeyInfo,
-                            remoteFormHost.trim(),
-                            remoteFormUser.trim(),
-                            remoteFormPort || 22,
-                          )}
+                          {buildRebuildPubKeyCommand(sshKeyInfo)}
                         </code>
                         <button
                           class="shrink-0 rounded border px-2 py-1 text-[10px] hover:bg-accent transition-colors"
                           onclick={async () => {
                             await navigator.clipboard.writeText(
-                              buildCopyCommand(
-                                sshKeyInfo!,
-                                remoteFormHost.trim(),
-                                remoteFormUser.trim(),
-                                remoteFormPort || 22,
-                              ),
+                              buildRebuildPubKeyCommand(sshKeyInfo!),
                             );
                             sshCopied = true;
                             setTimeout(() => (sshCopied = false), 2000);
@@ -3071,37 +3085,110 @@
                           {sshCopied ? t("settings_remote_sshKeyCopied") : t("common_copy")}
                         </button>
                       </div>
-
-                      <div class="flex items-center gap-2 mt-1">
-                        <button
-                          class="rounded border px-3 py-1.5 text-xs hover:bg-accent transition-colors"
-                          disabled={sshVerifying}
-                          onclick={verifySshConnection}
+                      <p class="text-muted-foreground text-[10px]">
+                        After running the command, click "Setup SSH Key" again.
+                      </p>
+                      <button
+                        class="text-[10px] text-muted-foreground hover:underline"
+                        onclick={closeSshWizard}
+                      >
+                        {t("settings_remote_sshKeyClose")}
+                      </button>
+                    {:else if sshKeyStep === "has_key" && sshKeyInfo}
+                      <p class="text-emerald-500">
+                        {t("settings_remote_sshKeyFound", { keyType: sshKeyInfo.key_type })}
+                        <span class="text-muted-foreground ml-1 font-mono"
+                          >{sshKeyInfo.key_path}</span
                         >
-                          {sshVerifying
-                            ? t("settings_remote_sshKeyVerifying")
-                            : t("settings_remote_sshKeyVerify")}
-                        </button>
+                      </p>
+
+                      {#if remoteFormHost && remoteFormUser}
+                        <p class="text-muted-foreground">
+                          {t(
+                            IS_WINDOWS
+                              ? "settings_remote_sshKeyCopyCmd_win"
+                              : "settings_remote_sshKeyCopyCmd",
+                          )}
+                        </p>
+                        <div class="flex items-center gap-2">
+                          <code
+                            class="flex-1 rounded bg-muted px-2 py-1.5 font-mono text-[11px] break-all select-all"
+                          >
+                            {buildCopyCommand(
+                              sshKeyInfo,
+                              remoteFormHost.trim(),
+                              remoteFormUser.trim(),
+                              remoteFormPort || 22,
+                            )}
+                          </code>
+                          <button
+                            class="shrink-0 rounded border px-2 py-1 text-[10px] hover:bg-accent transition-colors"
+                            onclick={async () => {
+                              await navigator.clipboard.writeText(
+                                buildCopyCommand(
+                                  sshKeyInfo!,
+                                  remoteFormHost.trim(),
+                                  remoteFormUser.trim(),
+                                  remoteFormPort || 22,
+                                ),
+                              );
+                              sshCopied = true;
+                              setTimeout(() => (sshCopied = false), 2000);
+                            }}
+                          >
+                            {sshCopied ? t("settings_remote_sshKeyCopied") : t("common_copy")}
+                          </button>
+                        </div>
+
+                        <div class="flex items-center gap-2 mt-1">
+                          <button
+                            class="rounded border px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+                            disabled={sshVerifying}
+                            onclick={verifySshConnection}
+                          >
+                            {sshVerifying
+                              ? t("settings_remote_sshKeyVerifying")
+                              : t("settings_remote_sshKeyVerify")}
+                          </button>
+                          <button
+                            class="text-[10px] text-muted-foreground hover:underline"
+                            onclick={closeSshWizard}
+                          >
+                            {t("settings_remote_sshKeyClose")}
+                          </button>
+                        </div>
+
+                        {#if sshKeyError && sshKeyStep === "has_key"}
+                          <p class="text-red-400 text-[11px]">
+                            {t(
+                              IS_WINDOWS
+                                ? "settings_remote_sshKeyFailed_win"
+                                : "settings_remote_sshKeyFailed",
+                            )}
+                          </p>
+                        {/if}
+                      {:else}
+                        <p class="text-muted-foreground text-[10px]">
+                          Fill in Host and User above, then come back to copy the install command.
+                        </p>
                         <button
                           class="text-[10px] text-muted-foreground hover:underline"
                           onclick={closeSshWizard}
                         >
                           {t("settings_remote_sshKeyClose")}
                         </button>
-                      </div>
-
-                      {#if sshKeyError && sshKeyStep === "has_key"}
-                        <p class="text-red-400 text-[11px]">
-                          {t(
-                            IS_WINDOWS
-                              ? "settings_remote_sshKeyFailed_win"
-                              : "settings_remote_sshKeyFailed",
-                          )}
-                        </p>
                       {/if}
-                    {:else}
-                      <p class="text-muted-foreground text-[10px]">
-                        Fill in Host and User above, then come back to copy the install command.
+                    {:else if sshKeyStep === "done"}
+                      <p class="text-emerald-500">{t("settings_remote_sshKeySuccess")}</p>
+                      <button
+                        class="text-[10px] text-muted-foreground hover:underline"
+                        onclick={closeSshWizard}
+                      >
+                        {t("settings_remote_sshKeyClose")}
+                      </button>
+                    {:else if sshKeyStep === "error"}
+                      <p class="text-red-400">
+                        {t("settings_remote_sshKeyGenError", { error: sshKeyError })}
                       </p>
                       <button
                         class="text-[10px] text-muted-foreground hover:underline"
@@ -3110,28 +3197,39 @@
                         {t("settings_remote_sshKeyClose")}
                       </button>
                     {/if}
-                  {:else if sshKeyStep === "done"}
-                    <p class="text-emerald-500">{t("settings_remote_sshKeySuccess")}</p>
-                    <button
-                      class="text-[10px] text-muted-foreground hover:underline"
-                      onclick={closeSshWizard}
-                    >
-                      {t("settings_remote_sshKeyClose")}
-                    </button>
-                  {:else if sshKeyStep === "error"}
-                    <p class="text-red-400">
-                      {t("settings_remote_sshKeyGenError", { error: sshKeyError })}
-                    </p>
-                    <button
-                      class="text-[10px] text-muted-foreground hover:underline"
-                      onclick={closeSshWizard}
-                    >
-                      {t("settings_remote_sshKeyClose")}
-                    </button>
-                  {/if}
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <div class="col-span-2">
+                <span class="text-xs text-muted-foreground block mb-1">
+                  {t("settings_remote_password")} *
+                </span>
+                <div class="flex gap-2">
+                  <input
+                    type={remoteShowPassword ? "text" : "password"}
+                    aria-label={t("settings_remote_password")}
+                    bind:value={remoteFormPassword}
+                    placeholder={t("settings_remote_passwordPlaceholder")}
+                    class="flex-1 text-sm px-2 py-1.5 rounded border bg-background {remoteFormTouched &&
+                    !remoteFormPassword.trim()
+                      ? 'border-red-500'
+                      : 'border-input'}"
+                    autocomplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    class="shrink-0 text-xs px-2 py-1.5 rounded border border-input hover:bg-accent transition-colors text-muted-foreground"
+                    onclick={() => (remoteShowPassword = !remoteShowPassword)}
+                  >
+                    {remoteShowPassword ? t("settings_general_hide") : t("settings_general_show")}
+                  </button>
                 </div>
-              {/if}
-            </div>
+                <p class="mt-1 text-[10px] text-muted-foreground">
+                  {t("settings_remote_passwordHint")}
+                </p>
+              </div>
+            {/if}
             <label class="block">
               <span class="text-xs text-muted-foreground block mb-1"
                 >{t("settings_remote_remoteCwd")}</span

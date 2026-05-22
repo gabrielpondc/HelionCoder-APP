@@ -1,10 +1,10 @@
 use crate::agent::claude_stream::augmented_path;
-use crate::agent::ssh::{expand_local_tilde, shell_escape};
+use crate::agent::ssh::{build_ssh_command, expand_local_tilde, shell_escape};
 use crate::models::{
     ApiModelListResult, ApiTestResult, AuthDiagnostics, ClaudeMdInfo, CliCheckResult,
     CliDiagnostics, CliDistTags, ConfigDiagnostics, ConfigIssue, DiagnosticsReport,
-    LocalProxyStatus, ProjectDiagnostics, ProjectInitStatus, RemoteTestResult, ServicesDiagnostics,
-    SshKeyInfo, SystemDiagnostics,
+    LocalProxyStatus, ProjectDiagnostics, ProjectInitStatus, RemoteHost, RemoteTestResult,
+    ServicesDiagnostics, SshKeyInfo, SystemDiagnostics,
 };
 use crate::process_ext::HideConsole;
 use std::path::Path;
@@ -12,6 +12,8 @@ use std::process::Command;
 
 const HELIONCODER_RELEASES_API_URL: &str =
     "https://api.github.com/repos/gabrielpondc/HelionCoder/releases?per_page=20";
+const HELIONCODER_TAGS_API_URL: &str =
+    "https://api.github.com/repos/gabrielpondc/HelionCoder/tags?per_page=50";
 
 fn resolved_cli_available(resolved: &str) -> bool {
     let path = Path::new(resolved);
@@ -517,10 +519,10 @@ pub async fn test_remote_host(
     user: String,
     port: Option<u16>,
     key_path: Option<String>,
+    password: Option<String>,
+    auth_method: Option<String>,
     remote_claude_path: Option<String>,
 ) -> Result<RemoteTestResult, String> {
-    use tokio::process::Command as TokioCommand;
-
     if crate::agent::claude_stream::which_binary("ssh").is_none() {
         return Ok(RemoteTestResult {
             ssh_ok: false,
@@ -533,28 +535,36 @@ pub async fn test_remote_host(
 
     let port = port.unwrap_or(22);
     let target = format!("{}@{}", user, host);
+    let auth_method = auth_method.unwrap_or_else(|| {
+        if password.as_deref().is_some_and(|p| !p.is_empty()) {
+            "password".to_string()
+        } else {
+            "key".to_string()
+        }
+    });
     log::debug!(
-        "[diagnostics] test_remote_host: target={}, port={}, key={:?}",
+        "[diagnostics] test_remote_host: target={}, port={}, auth={}, key={:?}",
         target,
         port,
+        auth_method,
         key_path
     );
 
+    let remote = RemoteHost {
+        name: "__probe__".to_string(),
+        host,
+        user,
+        port,
+        auth_method,
+        key_path,
+        password: password.filter(|p| !p.is_empty()),
+        remote_cwd: None,
+        remote_claude_path: remote_claude_path.clone(),
+        forward_api_key: false,
+    };
+
     // Step 1: SSH connectivity check (15s timeout)
-    let mut ssh_cmd = TokioCommand::new("ssh");
-    ssh_cmd.args([
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-    ]);
-    ssh_cmd.arg("-p").arg(port.to_string());
-    if let Some(ref key) = key_path {
-        ssh_cmd.args(["-i", &expand_local_tilde(key)]);
-    }
-    ssh_cmd.arg(&target).arg("echo ok");
+    let mut ssh_cmd = build_ssh_command(&remote, "echo ok");
     ssh_cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -605,13 +615,7 @@ pub async fn test_remote_host(
         "hc_bin=$(command -v helion-coder || command -v helioncoder) && printf '%s\\n' \"$hc_bin\" && \"$hc_bin\" --version".to_string()
     };
 
-    let mut cli_cmd = TokioCommand::new("ssh");
-    cli_cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
-    cli_cmd.arg("-p").arg(port.to_string());
-    if let Some(ref key) = key_path {
-        cli_cmd.args(["-i", &expand_local_tilde(key)]);
-    }
-    cli_cmd.arg(&target).arg(&check_cmd_str);
+    let mut cli_cmd = build_ssh_command(&remote, &check_cmd_str);
     cli_cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -816,6 +820,43 @@ async fn check_cli_inner() -> CliDiagnostics {
 
 // ── Sub-check: GitHub releases + auto-update channel ──
 
+fn version_numbers(tag: &str) -> Vec<u64> {
+    let core = tag
+        .trim()
+        .strip_prefix('v')
+        .unwrap_or(tag.trim())
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("");
+    let mut parts: Vec<u64> = core
+        .split('.')
+        .map(|part| part.parse::<u64>().unwrap_or(0))
+        .collect();
+    parts.resize(4, 0);
+    parts
+}
+
+fn latest_versionish_tag<I>(tags: I, include_prerelease: bool) -> Option<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    tags.into_iter()
+        .filter(|tag| include_prerelease || !tag.contains('-'))
+        .filter(|tag| !version_numbers(tag).iter().all(|part| *part == 0))
+        .max_by(|a, b| {
+            version_numbers(a)
+                .cmp(&version_numbers(b))
+                .then_with(|| a.cmp(b))
+        })
+}
+
+fn github_tag_version(tag: &serde_json::Value) -> Option<String> {
+    tag.get("name")
+        .and_then(|v| v.as_str())
+        .map(|name| name.strip_prefix('v').unwrap_or(name).trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
 fn release_tag_version(release: &serde_json::Value) -> Option<String> {
     release
         .get("tag_name")
@@ -837,13 +878,47 @@ async fn fetch_dist_tags_inner() -> (Option<String>, Option<String>, Option<Stri
         }
     };
 
+    let tag_resp = client
+        .get(HELIONCODER_TAGS_API_URL)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await;
+
+    let (mut latest, mut stable) = match tag_resp {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = match r.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("[diagnostics] tags: json parse failed: {}", e);
+                    serde_json::Value::Null
+                }
+            };
+            let tags: Vec<String> = body
+                .as_array()
+                .map(|items| items.iter().filter_map(github_tag_version).collect())
+                .unwrap_or_default();
+            (
+                latest_versionish_tag(tags.clone(), true),
+                latest_versionish_tag(tags, false),
+            )
+        }
+        Ok(r) => {
+            log::debug!("[diagnostics] tags: HTTP {}", r.status());
+            (None, None)
+        }
+        Err(e) => {
+            log::warn!("[diagnostics] tags fetch failed: {}", e);
+            (None, None)
+        }
+    };
+
     let resp = client
         .get(HELIONCODER_RELEASES_API_URL)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await;
 
-    let (latest, stable) = match resp {
+    let (release_latest, release_stable) = match resp {
         Ok(r) if r.status().is_success() => {
             let body: serde_json::Value = match r.json().await {
                 Ok(v) => v,
@@ -881,6 +956,9 @@ async fn fetch_dist_tags_inner() -> (Option<String>, Option<String>, Option<Stri
             (None, None)
         }
     };
+
+    latest = latest.or(release_latest);
+    stable = stable.or(release_stable).or_else(|| latest.clone());
 
     // Auto-update channel from CLI config
     let cli_config = crate::storage::cli_config::load_cli_config();

@@ -294,6 +294,10 @@ fn default_ssh_port() -> u16 {
     22
 }
 
+fn default_remote_auth_method() -> String {
+    "key".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteHost {
     pub name: String,
@@ -301,8 +305,12 @@ pub struct RemoteHost {
     pub user: String,
     #[serde(default = "default_ssh_port")]
     pub port: u16,
+    #[serde(default = "default_remote_auth_method")]
+    pub auth_method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

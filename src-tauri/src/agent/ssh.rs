@@ -5,6 +5,7 @@
 
 use crate::models::RemoteHost;
 use crate::process_ext::HideConsole;
+use std::path::PathBuf;
 use tokio::process::Command;
 
 /// Shell-escape a string using single quotes (POSIX-safe).
@@ -42,20 +43,84 @@ pub fn expand_local_tilde(path: &str) -> String {
     path.to_string()
 }
 
+fn is_password_auth(remote: &RemoteHost) -> bool {
+    remote.auth_method == "password" || (remote.key_path.is_none() && remote.password.is_some())
+}
+
+fn write_askpass_helper() -> Result<PathBuf, String> {
+    let path = std::env::temp_dir().join(format!(
+        "helioncoder-ssh-askpass-{}{}",
+        uuid::Uuid::new_v4(),
+        if cfg!(windows) { ".cmd" } else { ".sh" }
+    ));
+
+    #[cfg(windows)]
+    let script = "@echo off\r\n<nul set /p dummy=%HELION_SSH_PASSWORD%\r\n";
+
+    #[cfg(not(windows))]
+    let script = "#!/bin/sh\nprintf '%s' \"$HELION_SSH_PASSWORD\"\n";
+
+    std::fs::write(&path, script)
+        .map_err(|e| format!("failed to write SSH askpass helper: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("failed to chmod SSH askpass helper: {}", e))?;
+    }
+
+    Ok(path)
+}
+
+fn configure_password_auth(cmd: &mut Command, password: &str) {
+    match write_askpass_helper() {
+        Ok(helper) => {
+            cmd.env("SSH_ASKPASS", helper);
+            cmd.env("SSH_ASKPASS_REQUIRE", "force");
+            cmd.env("HELION_SSH_PASSWORD", password);
+            // Some OpenSSH builds still require DISPLAY to consider askpass.
+            cmd.env(
+                "DISPLAY",
+                std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "[ssh] password auth requested but askpass setup failed: {}",
+                e
+            );
+        }
+    }
+}
+
 /// Build an SSH `Command` that runs `remote_shell_command` on the remote host.
 pub fn build_ssh_command(remote: &RemoteHost, remote_shell_command: &str) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.hide_console();
-    cmd.arg("-o").arg("BatchMode=yes");
+    if is_password_auth(remote) {
+        cmd.arg("-o").arg("NumberOfPasswordPrompts=1");
+        cmd.arg("-o")
+            .arg("PreferredAuthentications=password,keyboard-interactive");
+        cmd.arg("-o").arg("PubkeyAuthentication=no");
+        if let Some(password) = remote.password.as_deref() {
+            configure_password_auth(&mut cmd, password);
+        }
+    } else {
+        cmd.arg("-o").arg("BatchMode=yes");
+    }
+    cmd.arg("-o").arg("ConnectTimeout=10");
     cmd.arg("-o").arg("ServerAliveInterval=30");
     cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
 
     if remote.port != 22 {
         cmd.arg("-p").arg(remote.port.to_string());
     }
-    if let Some(ref key) = remote.key_path {
-        // Expand ~/... for local key path (Command::arg doesn't go through shell)
-        cmd.arg("-i").arg(expand_local_tilde(key));
+    if !is_password_auth(remote) {
+        if let Some(ref key) = remote.key_path {
+            // Expand ~/... for local key path (Command::arg doesn't go through shell)
+            cmd.arg("-i").arg(expand_local_tilde(key));
+        }
     }
 
     let target = format!("{}@{}", remote.user, remote.host);
@@ -63,9 +128,14 @@ pub fn build_ssh_command(remote: &RemoteHost, remote_shell_command: &str) -> Com
     cmd.arg(remote_shell_command);
 
     log::debug!(
-        "[ssh] build_ssh_command: target={}, port={}, key={:?}, cmd_len={}",
+        "[ssh] build_ssh_command: target={}, port={}, auth={}, key={:?}, cmd_len={}",
         target,
         remote.port,
+        if is_password_auth(remote) {
+            "password"
+        } else {
+            "key"
+        },
         remote.key_path,
         remote_shell_command.len()
     );

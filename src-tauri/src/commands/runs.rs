@@ -114,7 +114,9 @@ pub fn start_run(
         } else {
             host.remote_cwd.clone()
         };
-        (effective, Some(host.clone()))
+        let mut snapshot = host.clone();
+        snapshot.password = None;
+        (effective, Some(snapshot))
     } else {
         (None, None)
     };

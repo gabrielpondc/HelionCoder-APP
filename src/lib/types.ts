@@ -166,7 +166,9 @@ export interface RemoteHost {
   host: string;
   user: string;
   port: number;
+  auth_method?: "key" | "password";
   key_path?: string;
+  password?: string;
   remote_cwd?: string;
   remote_claude_path?: string;
   forward_api_key: boolean;

@@ -668,6 +668,14 @@ pub async fn dispatch_command(
                 .get("key_path")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let password = params
+                .get("password")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let auth_method = params
+                .get("auth_method")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let remote_claude_path = params
                 .get("remote_claude_path")
                 .and_then(|v| v.as_str())
@@ -677,6 +685,8 @@ pub async fn dispatch_command(
                 user,
                 port,
                 key_path,
+                password,
+                auth_method,
                 remote_claude_path,
             )
             .await?;
