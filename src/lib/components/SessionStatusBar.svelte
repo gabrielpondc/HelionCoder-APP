@@ -230,8 +230,10 @@
   });
 
   // ── Model selector dropdown ──
-  // Use platform-specific models when a third-party provider is active
-  let models = $derived(platformModels.length > 0 ? platformModels : getCliModels());
+  // Remote sessions receive their host-specific model list via platformModels.
+  let models = $derived(
+    remoteHostName ? platformModels : platformModels.length > 0 ? platformModels : getCliModels(),
+  );
   let dropdownOpen = $state(false);
   let focusedModelIdx = $state(-1);
   let modelBtnEl: HTMLButtonElement | undefined = $state();
@@ -460,8 +462,9 @@
   let effortDisabled = $derived(currentModelInfo?.supportsEffort !== true);
 
   let modelLabel = $derived.by(() => {
-    // Check platform models first, then CLI models
-    const all = [...(platformModels ?? []), ...getCliModels()];
+    const all = remoteHostName
+      ? [...(platformModels ?? [])]
+      : [...(platformModels ?? []), ...getCliModels()];
     const found = all.find((m) => m.value === model);
     if (found) return found.displayName;
     const fuzzy = all.find((m) => model.includes(m.value) && m.value !== "default");

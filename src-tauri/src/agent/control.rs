@@ -140,8 +140,8 @@ pub async fn get_cli_info(cache: &CliInfoCache, force: bool) -> Result<CliInfo, 
         }
     };
 
-    // Read current model from ~/.helioncoder/settings.json
-    let current_model = read_helioncoder_settings_model();
+    // Read current model from HelionCoder config files.
+    let current_model = read_helioncoder_configured_model();
     let cli_info = CliInfo {
         current_model,
         ..cli_info
@@ -233,7 +233,7 @@ pub async fn get_remote_cli_info(remote: &RemoteHost) -> Result<CliInfo, CliInfo
         }
     };
 
-    cli_info.current_model = read_remote_helioncoder_settings_model(remote).await;
+    cli_info.current_model = read_remote_helioncoder_configured_model(remote).await;
     log::debug!(
         "[control] remote {} got {} models, current_model={:?}",
         remote.name,
@@ -342,36 +342,47 @@ async fn read_control_response(
     })
 }
 
-/// Read the "model" field from ~/.helioncoder/settings.json (HelionCoder's active model).
-fn read_helioncoder_settings_model() -> Option<String> {
-    let home = crate::storage::home_dir()?;
-    let path = std::path::Path::new(&home)
-        .join(".helioncoder")
-        .join("settings.json");
-    let contents = std::fs::read_to_string(&path).ok()?;
+fn read_json_string_field(path: &std::path::Path, key: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&contents).ok()?;
-    let model = parsed.get("model")?.as_str()?;
-    if model.is_empty() {
-        return None;
+    let value = parsed.get(key)?.as_str()?.trim();
+    if value.is_empty() {
+        None
+    } else {
+        log::debug!("[control] read {} from {:?}: {:?}", key, path, value);
+        Some(value.to_string())
     }
-    log::debug!("[control] read current model from {:?}: {:?}", path, model);
-    Some(model.to_string())
 }
 
-async fn read_remote_helioncoder_settings_model(remote: &RemoteHost) -> Option<String> {
+/// Read HelionCoder's configured model.
+///
+/// Newer configs use ~/.helioncoder/settings.json:model; older/imported configs
+/// may still keep the selected OpenAI-compatible model in config.json:openaiModel.
+fn read_helioncoder_configured_model() -> Option<String> {
+    let home = crate::storage::home_dir()?;
+    let root = std::path::Path::new(&home).join(".helioncoder");
+    read_json_string_field(&root.join("settings.json"), "model")
+        .or_else(|| read_json_string_field(&root.join("config.json"), "openaiModel"))
+}
+
+async fn read_remote_helioncoder_configured_model(remote: &RemoteHost) -> Option<String> {
     let python = r#"import json, os
-try:
-    with open(os.path.expanduser("~/.helioncoder/settings.json"), "r", encoding="utf-8") as f:
-        model = json.load(f).get("model")
-    print(model if isinstance(model, str) else "")
-except Exception:
-    pass
+for path, key in [
+    ("~/.helioncoder/settings.json", "model"),
+    ("~/.helioncoder/config.json", "openaiModel"),
+]:
+    try:
+        with open(os.path.expanduser(path), "r", encoding="utf-8") as f:
+            value = json.load(f).get(key)
+        if isinstance(value, str) and value.strip():
+            print(value.strip())
+            break
+    except Exception:
+        pass
 "#;
-    let sed_script = r#"s/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p"#;
     let remote_cmd = format!(
-        "if command -v python3 >/dev/null 2>&1; then python3 -c {}; else sed -n {} \"$HOME/.helioncoder/settings.json\" 2>/dev/null | head -n1; fi",
-        crate::agent::ssh::shell_escape(python),
-        crate::agent::ssh::shell_escape(sed_script)
+        r#"if command -v python3 >/dev/null 2>&1; then python3 -c {}; else model="$(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.helioncoder/settings.json" 2>/dev/null | head -n1)"; if [ -z "$model" ]; then model="$(sed -n 's/.*"openaiModel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.helioncoder/config.json" 2>/dev/null | head -n1)"; fi; printf '%s\n' "$model"; fi"#,
+        crate::agent::ssh::shell_escape(python)
     );
 
     let mut cmd = crate::agent::ssh::build_ssh_command(remote, &remote_cmd);
@@ -438,7 +449,7 @@ pub fn fallback_cli_info() -> CliInfo {
         commands: vec![],
         available_output_styles: vec!["default".to_string()],
         account: None,
-        current_model: read_helioncoder_settings_model(),
+        current_model: read_helioncoder_configured_model(),
         fetched_at: now_iso(),
     }
 }

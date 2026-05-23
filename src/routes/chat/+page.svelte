@@ -209,8 +209,8 @@
     return `ocv:selected-model:${platformId || "anthropic"}`;
   }
 
-  function remoteModelStorageKey(hostName: string, platformId?: string | null): string {
-    return `ocv:selected-model:remote:${hostName}:${platformId || "anthropic"}`;
+  function remoteModelStorageKey(hostName: string): string {
+    return `ocv:selected-model:remote:${hostName}`;
   }
 
   function uniqueModelList(models: readonly CliModelInfo[]): CliModelInfo[] {
@@ -246,18 +246,17 @@
     models?: readonly string[],
   ): string | undefined {
     if (typeof localStorage === "undefined") return undefined;
-    const stored = localStorage.getItem(remoteModelStorageKey(hostName, platformId))?.trim();
+    const legacyKey = `ocv:selected-model:remote:${hostName}:${platformId || "anthropic"}`;
+    const stored =
+      localStorage.getItem(remoteModelStorageKey(hostName))?.trim() ||
+      localStorage.getItem(legacyKey)?.trim();
     if (!stored) return undefined;
     return !models || models.length === 0 || models.includes(stored) ? stored : undefined;
   }
 
-  function setStoredModelForRemote(
-    hostName: string,
-    platformId: string | null | undefined,
-    model: string,
-  ) {
+  function setStoredModelForRemote(hostName: string, model: string) {
     if (typeof localStorage === "undefined" || !model.trim()) return;
-    localStorage.setItem(remoteModelStorageKey(hostName, platformId), model.trim());
+    localStorage.setItem(remoteModelStorageKey(hostName), model.trim());
   }
 
   // ── Project init detection ──
@@ -424,8 +423,10 @@
   let remoteCliInfoHost = $state<string | null>(null);
   let remoteCliInfoGen = 0;
   let activeCliCommands = $derived(
-    store.remoteHostName && remoteCliInfoHost === store.remoteHostName
-      ? (remoteCliInfo?.commands ?? [])
+    store.remoteHostName
+      ? remoteCliInfoHost === store.remoteHostName
+        ? (remoteCliInfo?.commands ?? [])
+        : []
       : getCliCommands(),
   );
   let promptCommands = $derived(
@@ -810,11 +811,20 @@
   });
 
   let activeCliModels = $derived(
-    store.remoteHostName && remoteCliInfoHost === store.remoteHostName
-      ? uniqueModelList(remoteCliInfo?.models ?? [])
+    store.remoteHostName
+      ? remoteCliInfoHost === store.remoteHostName
+        ? uniqueModelList(remoteCliInfo?.models ?? [])
+        : []
       : uniqueModelList(getCliModels()),
   );
-  let effectiveModels = $derived(platformModels.length > 0 ? platformModels : activeCliModels);
+  let effectiveModels = $derived(
+    store.remoteHostName
+      ? activeCliModels
+      : platformModels.length > 0
+        ? platformModels
+        : activeCliModels,
+  );
+  let statusBarModelOptions = $derived(store.remoteHostName ? activeCliModels : platformModels);
   let currentEffort = $state("");
 
   function applyLocalCliModel() {
@@ -837,8 +847,7 @@
       const dedupedInfo = { ...info, models: uniqueModelList(info.models) };
       remoteCliInfo = dedupedInfo;
       remoteCliInfoHost = hostName;
-      const isThirdParty = store.platformId && store.platformId !== "anthropic";
-      if (!store.run && !runId && store.phase !== "loading" && !isThirdParty) {
+      if (!store.run && !runId && store.phase !== "loading") {
         const remoteModel =
           getStoredModelForRemote(
             hostName,
@@ -866,7 +875,13 @@
     setLastTarget(hostName);
     dbg("chat", "target changed", hostName ?? "local");
     targetDropdownOpen = false;
-    if (!hostName) applyLocalCliModel();
+    if (hostName) {
+      if (!store.run && !runId && store.phase !== "loading") {
+        store.model = "";
+      }
+    } else {
+      applyLocalCliModel();
+    }
   }
 
   $effect(() => {
@@ -1400,6 +1415,9 @@
         }
         store.remoteHostName = resolvedHost;
         setLastTarget(resolvedHost);
+        if (resolvedHost && !store.run && !runId && store.phase !== "loading") {
+          store.model = "";
+        }
       }
       if (folder) {
         if (resolvedHost) {
@@ -1554,6 +1572,9 @@
         const lastTarget = getLastTarget();
         if (lastTarget && remoteHosts.some((h) => h.name === lastTarget)) {
           store.remoteHostName = lastTarget;
+          if (!store.run && !runId && store.phase !== "loading") {
+            store.model = "";
+          }
         }
       }
       // Initialize per-session platform from global active. Auth still comes from
@@ -1563,7 +1584,7 @@
       }
       // Initialize model: for third-party platforms, use credential > preset default model
       // Only for new sessions — if runId is set, loadRun will handle model restoration.
-      if (!store.model && !runId && store.phase !== "loading") {
+      if (!store.model && !store.remoteHostName && !runId && store.phase !== "loading") {
         const initCred = findCredential(
           settings.platform_credentials ?? [],
           store.platformId ?? "",
@@ -2420,7 +2441,6 @@
         // stale `store.remoteHostName`, and the backend `start_run` would
         // fail with an opaque "Remote host '...' not found".
         if (
-          !pureChatMode &&
           store.remoteHostName &&
           remoteHosts.length > 0 &&
           !remoteHosts.some((h) => h.name === store.remoteHostName)
@@ -2433,12 +2453,7 @@
           setLastTarget(null);
           return;
         }
-        if (pureChatMode) {
-          // Chat mode is intentionally context-light: no project picker, no remote target,
-          // no workspace cwd. Uploaded files are still passed as attachments.
-          store.remoteHostName = null;
-        }
-        const isRemote = !pureChatMode && !!store.remoteHostName;
+        const isRemote = !!store.remoteHostName;
         let cwd = pureChatMode ? "/" : "";
         if (!pureChatMode && typeof window !== "undefined") {
           if (isRemote) {
@@ -2487,6 +2502,10 @@
               window.dispatchEvent(new Event("ocv:cwd-changed"));
             }
           }
+        }
+
+        if (isRemote && store.remoteHostName && remoteCliInfoHost !== store.remoteHostName) {
+          await loadRemoteTargetCliInfo(store.remoteHostName);
         }
 
         if (!isRemote && !(await ensureLocalCliAvailable())) return;
@@ -2875,7 +2894,7 @@
     const isThirdParty = store.platformId && store.platformId !== "anthropic";
     const isRemoteTarget = !!store.remoteHostName;
     if (isRemoteTarget && store.remoteHostName) {
-      setStoredModelForRemote(store.remoteHostName, store.platformId, newModel);
+      setStoredModelForRemote(store.remoteHostName, newModel);
     } else {
       setStoredModelForPlatform(store.platformId, newModel);
     }
@@ -4465,7 +4484,7 @@
         onMcpToggle={() => (mcpPanelOpen = !mcpPanelOpen)}
         cliVersion={store.cliVersion}
         permissionMode={store.permissionMode}
-        {platformModels}
+        platformModels={statusBarModelOptions}
         fastModeState={store.fastModeState}
         verbose={verboseEnabled}
         numTurns={store.numTurns}

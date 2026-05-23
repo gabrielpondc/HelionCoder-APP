@@ -501,7 +501,7 @@ export interface CliInfo {
   commands: CliCommand[];
   available_output_styles: string[];
   account?: CliAccount;
-  /** The model currently selected in Claude Code (from ~/.claude/settings.json) */
+  /** The model currently selected in HelionCoder config. */
   current_model?: string;
   fetched_at: string;
 }

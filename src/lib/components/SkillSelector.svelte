@@ -39,11 +39,20 @@
   function updateDropdownPosition() {
     if (!buttonEl) return;
     const rect = buttonEl.getBoundingClientRect();
+    const gap = 6;
+    const pad = 12;
+    const dropdownWidth = 320;
     const spaceBelow = window.innerHeight - rect.bottom;
-    if (spaceBelow < 300) {
-      dropdownStyle = `position:fixed; bottom:${window.innerHeight - rect.top + 4}px; left:${rect.left}px; z-index:50;`;
+    const spaceAbove = rect.top;
+    const left = Math.max(pad, Math.min(rect.left, window.innerWidth - dropdownWidth - pad));
+    const openAbove = spaceBelow < 220 && spaceAbove > spaceBelow;
+    const availableHeight = Math.max(openAbove ? spaceAbove : spaceBelow, 120) - gap - pad;
+    const maxHeight = Math.min(384, Math.max(120, availableHeight));
+
+    if (openAbove) {
+      dropdownStyle = `position:fixed; bottom:${Math.max(pad, window.innerHeight - rect.top + gap)}px; left:${left}px; width:min(20rem, calc(100vw - ${pad * 2}px)); max-height:${maxHeight}px; z-index:50;`;
     } else {
-      dropdownStyle = `position:fixed; top:${rect.bottom + 4}px; left:${rect.left}px; z-index:50;`;
+      dropdownStyle = `position:fixed; top:${Math.max(pad, rect.bottom + gap)}px; left:${left}px; width:min(20rem, calc(100vw - ${pad * 2}px)); max-height:${maxHeight}px; z-index:50;`;
     }
   }
 
@@ -116,7 +125,7 @@
 
   {#if dropdownOpen}
     <div
-      class="w-80 max-h-96 overflow-y-auto rounded-lg border bg-background shadow-lg animate-fade-in"
+      class="overflow-y-auto rounded-lg border bg-background shadow-lg animate-fade-in"
       style={dropdownStyle}
     >
       {#if isEmpty}
