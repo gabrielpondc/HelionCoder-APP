@@ -2473,14 +2473,14 @@
 
 {#if isWindowsDesktop}
   <div
-    class="titlebar-no-drag fixed right-0 top-0 z-[95] flex h-9 select-none overflow-hidden text-foreground"
+    class="windows-window-controls titlebar-no-drag fixed right-0 top-0 z-[95] flex h-9 select-none text-foreground"
     data-no-window-drag
     role="group"
     aria-label="Window controls"
   >
     <button
       type="button"
-      class="flex h-9 w-12 items-center justify-center text-foreground/80 transition-colors hover:bg-foreground/10"
+      class="flex h-9 shrink-0 items-center justify-center text-foreground/80 transition-colors hover:bg-foreground/10"
       onclick={() => void minimizeWindow()}
       title="Minimize"
       aria-label="Minimize"
@@ -2491,7 +2491,7 @@
     </button>
     <button
       type="button"
-      class="flex h-9 w-12 items-center justify-center text-foreground/80 transition-colors hover:bg-foreground/10"
+      class="flex h-9 shrink-0 items-center justify-center text-foreground/80 transition-colors hover:bg-foreground/10"
       onclick={() => void toggleWindowMaximizeFromControl()}
       title="Maximize"
       aria-label="Maximize"
@@ -2511,7 +2511,7 @@
     </button>
     <button
       type="button"
-      class="flex h-9 w-12 items-center justify-center text-foreground/80 transition-colors hover:bg-red-500 hover:text-white"
+      class="flex h-9 shrink-0 items-center justify-center text-foreground/80 transition-colors hover:bg-red-500 hover:text-white"
       onclick={() => void closeWindow()}
       title="Close"
       aria-label="Close"

@@ -105,11 +105,24 @@ body.desktop-window-transparent {
 
 html.windows-desktop,
 body.windows-desktop {
-  --windows-titlebar-control-safe-area: 156px;
+  --windows-titlebar-control-safe-area: 132px;
 }
 
 .windows-titlebar-safe-right {
-  padding-right: calc(1rem + var(--windows-titlebar-control-safe-area)) !important;
+  padding-right: max(1rem, calc(0.75rem + var(--windows-titlebar-control-safe-area))) !important;
+}
+
+.windows-window-controls {
+  width: var(--windows-titlebar-control-safe-area);
+  justify-content: flex-end;
+  background: hsl(var(--background) / 0.78);
+  box-shadow: inset 1px 0 hsl(var(--border) / 0.32);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+.windows-window-controls > button {
+  width: calc(var(--windows-titlebar-control-safe-area) / 3);
 }
 
 .app-shell {
