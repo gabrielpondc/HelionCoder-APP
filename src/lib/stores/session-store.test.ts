@@ -496,7 +496,21 @@ describe("SessionStore reducer", () => {
   // ── Raw event ──
 
   describe("raw event handling", () => {
-    it("adds raw claude_stdout_text to timeline", () => {
+    it("adds raw helion_stdout_text to timeline", () => {
+      store.run = makeRun("run-1");
+      store.phase = "running";
+      store.applyEvent({
+        type: "raw",
+        run_id: "run-1",
+        source: "helion_stdout_text",
+        data: { text: "raw output" } as unknown as Record<string, unknown>,
+      });
+      expect(store.timeline).toHaveLength(1);
+      expect(store.timeline[0].kind).toBe("assistant");
+      expect((store.timeline[0] as { content: string }).content).toContain("helion_stdout_text");
+    });
+
+    it("aliases legacy raw claude_stdout_text to helion_stdout_text", () => {
       store.run = makeRun("run-1");
       store.phase = "running";
       store.applyEvent({
@@ -506,8 +520,7 @@ describe("SessionStore reducer", () => {
         data: { text: "raw output" } as unknown as Record<string, unknown>,
       });
       expect(store.timeline).toHaveLength(1);
-      expect(store.timeline[0].kind).toBe("assistant");
-      expect((store.timeline[0] as { content: string }).content).toContain("claude_stdout_text");
+      expect((store.timeline[0] as { content: string }).content).toContain("helion_stdout_text");
     });
 
     it("ignores raw events from non-claude sources", () => {
@@ -1076,7 +1089,21 @@ describe("SessionStore reducer", () => {
       expect(tools).toHaveLength(1);
     });
 
-    it("raw claude_stderr: appears in timeline", () => {
+    it("raw helion_stderr: appears in timeline", () => {
+      store.run = makeRun("run-1");
+      store.phase = "running";
+      store.applyEvent({
+        type: "raw",
+        run_id: "run-1",
+        source: "helion_stderr",
+        data: { text: "error msg" } as unknown as Record<string, unknown>,
+      });
+      expect(store.timeline).toHaveLength(1);
+      expect(store.timeline[0].kind).toBe("assistant");
+      expect((store.timeline[0] as { content: string }).content).toContain("helion_stderr");
+    });
+
+    it("aliases legacy raw claude_stderr to helion_stderr", () => {
       store.run = makeRun("run-1");
       store.phase = "running";
       store.applyEvent({
@@ -1086,8 +1113,7 @@ describe("SessionStore reducer", () => {
         data: { text: "error msg" } as unknown as Record<string, unknown>,
       });
       expect(store.timeline).toHaveLength(1);
-      expect(store.timeline[0].kind).toBe("assistant");
-      expect((store.timeline[0] as { content: string }).content).toContain("claude_stderr");
+      expect((store.timeline[0] as { content: string }).content).toContain("helion_stderr");
     });
 
     it("raw unknown source: silently ignored, no crash", () => {

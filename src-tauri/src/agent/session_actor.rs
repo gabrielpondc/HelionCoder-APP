@@ -1388,7 +1388,7 @@ impl SessionActor {
                 // User turn or idle → emit Raw
                 self.persist_and_emit(&BusEvent::Raw {
                     run_id: self.run_id.clone(),
-                    source: "claude_stdout_text".to_string(),
+                    source: "helion_stdout_text".to_string(),
                     data: Value::String(text.to_string()),
                 });
                 return;
@@ -2051,7 +2051,7 @@ impl SessionActor {
 
         let event = BusEvent::Raw {
             run_id: self.run_id.clone(),
-            source: "claude_stderr".to_string(),
+            source: "helion_stderr".to_string(),
             data: Value::String(text.to_string()),
         };
         self.emitter.persist_and_emit(&self.run_id, &event);

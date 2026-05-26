@@ -122,7 +122,8 @@ fn map_permission_mode(mode: &str) -> String {
         "ask" => "default".to_string(),
         "auto_read" => "acceptEdits".to_string(),
         "auto_all" => "bypassPermissions".to_string(),
-        "auto" => "auto".to_string(),
+        // Legacy/internal classifier mode; external CLI builds reject it as a flag.
+        "auto" => "default".to_string(),
         "delegate" => "acceptEdits".to_string(), // CLI v2.1.81+ alias for acceptEdits
         "dont_ask" => "dontAsk".to_string(),
         other => {
@@ -454,6 +455,11 @@ mod tests {
         let s = make_settings();
         let args = build_settings_args(&s, false);
         assert!(args.is_empty(), "all-None settings should produce no args");
+    }
+
+    #[test]
+    fn test_legacy_auto_permission_mode_maps_to_default() {
+        assert_eq!(map_permission_mode("auto"), "default");
     }
 
     #[test]

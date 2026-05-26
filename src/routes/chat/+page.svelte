@@ -1981,7 +1981,7 @@
             ));
         if (isFocusable) return;
       }
-      const modes = ["default", "acceptEdits", "bypassPermissions", "plan", "auto", "dontAsk"];
+      const modes = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"];
       const idx = modes.indexOf(store.permissionMode);
       const next = modes[(idx + 1) % modes.length];
       handlePermissionModeChange(next);
@@ -2677,7 +2677,6 @@
     acceptEdits: "auto_read",
     bypassPermissions: "auto_all",
     plan: "plan",
-    auto: "auto",
     dontAsk: "dont_ask",
   };
   const APP_TO_CLI_MODE: Record<string, string> = {
@@ -2685,7 +2684,7 @@
     auto_read: "acceptEdits",
     auto_all: "bypassPermissions",
     plan: "plan",
-    auto: "auto",
+    auto: "default",
     dont_ask: "dontAsk",
   };
 
@@ -2695,7 +2694,6 @@
       acceptEdits: () => t("prompt_permAutoReadShort"),
       bypassPermissions: () => t("prompt_permAutoAllShort"),
       plan: () => t("prompt_permPlanShort"),
-      auto: () => t("prompt_permAutoShort"),
       dontAsk: () => t("prompt_permDontAskShort"),
     };
     return map[mode]?.() ?? mode;

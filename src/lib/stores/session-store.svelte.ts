@@ -49,11 +49,19 @@ function normalizeAgent(agent: string | undefined): string {
 // Normalize to the canonical names used throughout the app.
 const CLI_PERM_MODE_ALIASES: Record<string, string> = {
   delegate: "acceptEdits", // CLI v2.1.81+ renamed acceptEdits → delegate
+  auto: "default",
 };
 
 function normalizePermissionMode(mode: string): string {
   return CLI_PERM_MODE_ALIASES[mode] ?? mode;
 }
+
+const RAW_SOURCE_LABELS: Record<string, string> = {
+  helion_stdout_text: "helion_stdout_text",
+  helion_stderr: "helion_stderr",
+  claude_stdout_text: "helion_stdout_text",
+  claude_stderr: "helion_stderr",
+};
 
 // ── OpGuard: async operation guard with mounted check ──
 
@@ -1757,7 +1765,7 @@ export class SessionStore {
           auto_read: "acceptEdits",
           auto_all: "bypassPermissions",
           plan: "plan",
-          auto: "auto",
+          auto: "default",
           dont_ask: "dontAsk",
         };
         if (permissionModeOverride) {
@@ -3320,13 +3328,14 @@ export class SessionStore {
 
       case "raw": {
         const rawText = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data);
-        if (rawText && (ev.source === "claude_stdout_text" || ev.source === "claude_stderr")) {
+        const rawSourceLabel = RAW_SOURCE_LABELS[ev.source];
+        if (rawText && rawSourceLabel) {
           const rawId = uuid();
           const entry: TimelineEntry = {
             kind: "assistant",
             id: rawId,
             anchorId: rawId,
-            content: `\`[${ev.source}]\` ${rawText}`,
+            content: `\`[${rawSourceLabel}]\` ${rawText}`,
             ts: new Date().toISOString(),
           };
           this._pushTimeline(ctx, entry);

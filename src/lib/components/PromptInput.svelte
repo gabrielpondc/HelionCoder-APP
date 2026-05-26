@@ -287,17 +287,6 @@
         "border-purple-400/40 focus-within:border-purple-400/60 focus-within:shadow-[0_0_0_1px_rgba(192,132,252,0.15)]",
     },
     {
-      value: "auto",
-      icon: "spark",
-      label: () => t("prompt_permAutoLabel"),
-      shortLabel: () => t("prompt_permAutoShort"),
-      description: () => t("prompt_permAutoDesc"),
-      cls: "text-teal-400",
-      dotCls: "bg-teal-400",
-      borderCls:
-        "border-teal-400/40 focus-within:border-teal-400/60 focus-within:shadow-[0_0_0_1px_rgba(45,212,191,0.15)]",
-    },
-    {
       value: "dontAsk",
       icon: "ban",
       label: () => t("prompt_permDontAskLabel"),
