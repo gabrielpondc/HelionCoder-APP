@@ -198,7 +198,9 @@
 </script>
 
 <div class="flex h-full flex-col overflow-hidden bg-background" data-live-doc-editor>
-  <div class="flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
+  <div
+    class="windows-titlebar-safe-right flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4"
+  >
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2">
         <span class="truncate text-sm font-semibold text-foreground">{fileName}</span>

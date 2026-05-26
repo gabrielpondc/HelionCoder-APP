@@ -595,7 +595,7 @@
 {/snippet}
 
 <div class="border-b border-border bg-background/95">
-  <div class="flex h-11 min-w-0 items-center gap-2 px-4">
+  <div class="windows-titlebar-safe-right flex h-11 min-w-0 items-center gap-2 px-4">
     {#if run && onRename && titleEditing}
       <input
         bind:this={titleInputEl}

@@ -29,6 +29,7 @@
     --sidebar-border: 220 13% 91%;
     --border: 240 5.9% 90%;
     --radius: 0.75rem;
+    --windows-titlebar-control-safe-area: 0px;
     color-scheme: light;
   }
 
@@ -100,6 +101,15 @@
 html.desktop-window-transparent,
 body.desktop-window-transparent {
   background: transparent !important;
+}
+
+html.windows-desktop,
+body.windows-desktop {
+  --windows-titlebar-control-safe-area: 156px;
+}
+
+.windows-titlebar-safe-right {
+  padding-right: calc(1rem + var(--windows-titlebar-control-safe-area)) !important;
 }
 
 .app-shell {

@@ -1236,6 +1236,8 @@
     isWindowsDesktop = isDesktopApp && /win/i.test(platformText);
     document.documentElement.classList.toggle("desktop-window-transparent", isGlassDesktop);
     document.body.classList.toggle("desktop-window-transparent", isGlassDesktop);
+    document.documentElement.classList.toggle("windows-desktop", isWindowsDesktop);
+    document.body.classList.toggle("windows-desktop", isWindowsDesktop);
     void applyDesktopWindowEffects();
     void refreshWindowChromeState();
 
