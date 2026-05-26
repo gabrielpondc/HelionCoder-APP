@@ -953,7 +953,7 @@
   "cmd_error": "错误",
   "cmd_doctor": "诊断",
   "cmd_versionInfo": "版本信息",
-  "cmd_versionContent": "HelionCoder Desktop v0.5.1\nTauri v2\nSvelte 5",
+  "cmd_versionContent": "HelionCoder Desktop v0.5.2\nTauri v2\nSvelte 5",
   "cmd_noChanges": "无更改",
   "cmd_workingTreeClean": "工作区干净",
   "cmd_cliInstalled": "已安装",

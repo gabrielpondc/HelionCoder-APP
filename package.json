@@ -1,6 +1,6 @@
 {
   "name": "helioncoder-desktop",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "HelionCoder desktop client for chat, cowork, and code workflows",
   "type": "module",
   "license": "Apache-2.0",

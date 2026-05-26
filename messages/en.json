@@ -995,7 +995,7 @@
   "cmd_error": "Error",
   "cmd_doctor": "Doctor",
   "cmd_versionInfo": "Version Info",
-  "cmd_versionContent": "HelionCoder Desktop v0.5.1\nTauri v2\nSvelte 5",
+  "cmd_versionContent": "HelionCoder Desktop v0.5.2\nTauri v2\nSvelte 5",
   "cmd_noChanges": "No changes",
   "cmd_workingTreeClean": "Working tree clean",
   "cmd_cliInstalled": "Installed",
