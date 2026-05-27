@@ -1,5 +1,6 @@
 use crate::storage::teams::claude_home_dir;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 /// Path to the user-level CLI settings file: ~/.helioncoder/settings.json
@@ -44,6 +45,67 @@ fn read_json_object(path: &PathBuf, label: &str) -> Value {
     }
 }
 
+pub(crate) fn model_options_cache_key_hash(api_key: &str) -> String {
+    let digest = Sha256::digest(api_key.as_bytes());
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn current_api_key(config: &Value) -> Option<&str> {
+    string_field(config, "openaiApiKey")
+        .or_else(|| string_field(config, "primaryApiKey"))
+        .or_else(|| string_field(config, "apiKey"))
+}
+
+fn normalize_base_url(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_string()
+}
+
+fn sanitize_model_options_cache(config: &mut Value) {
+    let has_cache = config
+        .get("openaiModelOptionsCache")
+        .and_then(|v| v.as_array())
+        .is_some_and(|models| !models.is_empty());
+    if !has_cache {
+        return;
+    }
+
+    let base_url = string_field(config, "openaiBaseUrl").map(normalize_base_url);
+    let cache_base_url =
+        string_field(config, "openaiModelOptionsCacheBaseUrl").map(normalize_base_url);
+    let cache_key_hash = string_field(config, "openaiModelOptionsCacheKeyHash");
+    let current_key_hash =
+        model_options_cache_key_hash(current_api_key(config).unwrap_or_default());
+
+    let cache_matches = base_url.is_some()
+        && base_url == cache_base_url
+        && cache_key_hash.is_some()
+        && Some(current_key_hash.as_str()) == cache_key_hash;
+
+    if cache_matches {
+        return;
+    }
+
+    if let Some(map) = config.as_object_mut() {
+        log::debug!("[cli_config] dropping stale openaiModelOptionsCache");
+        for key in [
+            "openaiModelOptionsCache",
+            "openaiModelOptionsCacheBaseUrl",
+            "openaiModelOptionsCacheUpdatedAt",
+            "openaiModelOptionsCacheKeyHash",
+        ] {
+            map.remove(key);
+        }
+    }
+}
+
 /// Load user-level CLI settings (~/.helioncoder/settings.json), merged with
 /// auth-related global config (~/.helioncoder/config.json) for compatibility
 /// with the HelionCoder CLI.
@@ -61,6 +123,7 @@ pub fn load_cli_config() -> Value {
             "openaiModelOptionsCache",
             "openaiModelOptionsCacheBaseUrl",
             "openaiModelOptionsCacheUpdatedAt",
+            "openaiModelOptionsCacheKeyHash",
             "primaryApiKey",
         ] {
             if !settings_map.contains_key(key) {
@@ -71,6 +134,7 @@ pub fn load_cli_config() -> Value {
         }
     }
 
+    sanitize_model_options_cache(&mut settings);
     settings
 }
 
@@ -129,6 +193,7 @@ pub fn update_cli_global_config(patch: Value) -> Result<Value, String> {
             map.insert(key.clone(), value.clone());
         }
     }
+    sanitize_model_options_cache(&mut config);
 
     let path = cli_global_config_path();
     if let Some(parent) = path.parent() {

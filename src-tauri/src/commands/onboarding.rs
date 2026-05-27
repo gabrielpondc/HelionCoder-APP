@@ -435,7 +435,8 @@ pub async fn set_cli_api_config(
         "openaiSmallModel": if small_model.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(small_model.to_string()) },
         "openaiModelOptionsCache": if cleaned_options.is_empty() { serde_json::Value::Null } else { serde_json::json!(cleaned_options) },
         "openaiModelOptionsCacheBaseUrl": if cleaned_options.is_empty() || base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(base_url.to_string()) },
-        "openaiModelOptionsCacheUpdatedAt": if cleaned_options.is_empty() { serde_json::Value::Null } else { serde_json::json!(chrono::Utc::now().timestamp_millis()) }
+        "openaiModelOptionsCacheUpdatedAt": if cleaned_options.is_empty() { serde_json::Value::Null } else { serde_json::json!(chrono::Utc::now().timestamp_millis()) },
+        "openaiModelOptionsCacheKeyHash": if cleaned_options.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(storage::cli_config::model_options_cache_key_hash(api_key)) }
     }))?;
     Ok(())
 }

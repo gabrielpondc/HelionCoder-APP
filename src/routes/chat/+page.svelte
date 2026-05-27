@@ -4288,7 +4288,7 @@
           class="font-mono text-amber-300 hover:text-amber-200 underline underline-offset-2 transition-colors"
           onclick={() => sendMessage("/init", [])}>{t("chat_initHintAction")}</button
         >
-        to create CLAUDE.md
+        to create HELIONCODER.md
       </span>
       <button
         class="ml-auto text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"

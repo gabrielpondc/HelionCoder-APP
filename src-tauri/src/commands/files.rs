@@ -358,24 +358,43 @@ pub fn list_memory_files(
     cwd: Option<String>,
 ) -> Result<Vec<crate::models::MemoryFileCandidate>, String> {
     let project_names = [
+        "HELIONCODER.md",
+        ".helioncoder/HELIONCODER.md",
+        "HELIONCODER.local.md",
+        ".helioncoder/HELIONCODER.local.md",
         "CLAUDE.md",
         ".claude/CLAUDE.md",
         "CLAUDE.local.md",
         ".claude/CLAUDE.local.md",
     ];
-    let global_names = ["CLAUDE.md", "CLAUDE.local.md"];
+    let global_names = [
+        "HELIONCODER.md",
+        "HELIONCODER.local.md",
+        "CLAUDE.md",
+        "CLAUDE.local.md",
+    ];
 
     let mut files = Vec::new();
 
     // Global scope — only if home is available
     match crate::storage::home_dir() {
         Some(home) if !home.is_empty() => {
-            let claude_dir = std::path::Path::new(&home).join(".claude");
+            let helion_dir = std::path::Path::new(&home).join(".helioncoder");
             for name in &global_names {
-                let p = claude_dir.join(name);
+                let p = helion_dir.join(name);
                 files.push(crate::models::MemoryFileCandidate {
                     path: p.display().to_string(),
                     label: name.to_string(),
+                    scope: "global".to_string(),
+                    exists: p.exists(),
+                });
+            }
+            let legacy_claude_dir = std::path::Path::new(&home).join(".claude");
+            for name in ["CLAUDE.md", "CLAUDE.local.md"] {
+                let p = legacy_claude_dir.join(name);
+                files.push(crate::models::MemoryFileCandidate {
+                    path: p.display().to_string(),
+                    label: format!("{} (legacy)", name),
                     scope: "global".to_string(),
                     exists: p.exists(),
                 });
@@ -402,17 +421,19 @@ pub fn list_memory_files(
         }
     }
 
-    // Project auto-memory scope — scan ~/.claude/projects/{slug}/memory/*.md
+    // Project auto-memory scope — scan Helion memory first, then legacy Claude memory.
     if let (Some(home), Some(ref cwd_val)) = (crate::storage::home_dir(), &cwd) {
         let slug = crate::storage::cli_sessions::encode_cwd(cwd_val);
-        let memory_dir = std::path::Path::new(&home)
-            .join(".claude")
-            .join("projects")
-            .join(&slug)
-            .join("memory");
-        if memory_dir.is_dir() {
-            let memory_files = scan_memory_md_files(&memory_dir, &memory_dir, 3, 50);
-            files.extend(memory_files);
+        for dir_name in [".helioncoder", ".claude"] {
+            let memory_dir = std::path::Path::new(&home)
+                .join(dir_name)
+                .join("projects")
+                .join(&slug)
+                .join("memory");
+            if memory_dir.is_dir() {
+                let memory_files = scan_memory_md_files(&memory_dir, &memory_dir, 3, 50);
+                files.extend(memory_files);
+            }
         }
     }
 

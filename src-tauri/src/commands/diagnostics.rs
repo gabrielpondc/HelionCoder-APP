@@ -663,7 +663,7 @@ pub async fn test_remote_host(
     })
 }
 
-/// Check if a project directory has been initialized (has CLAUDE.md).
+/// Check if a project directory has been initialized (has HELIONCODER.md).
 #[tauri::command]
 pub fn check_project_init(cwd: String) -> Result<ProjectInitStatus, String> {
     log::debug!("[diagnostics] check_project_init: cwd={}", cwd);
@@ -678,7 +678,10 @@ pub fn check_project_init(cwd: String) -> Result<ProjectInitStatus, String> {
     let canonical = std::fs::canonicalize(root)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| cwd.clone());
-    let has_claude_md = root.join("CLAUDE.md").is_file();
+    let has_claude_md = root.join("HELIONCODER.md").is_file()
+        || root.join(".helioncoder").join("HELIONCODER.md").is_file()
+        || root.join("CLAUDE.md").is_file()
+        || root.join(".claude").join("CLAUDE.md").is_file();
     log::debug!(
         "[diagnostics] check_project_init: canonical={}, has_claude_md={}",
         canonical,
@@ -725,9 +728,7 @@ pub async fn run_diagnostics(cwd: String) -> Result<DiagnosticsReport, String> {
     };
 
     // Sync checks
-    let home = crate::storage::dirs_next()
-        .map(|h| h.join(".claude"))
-        .unwrap_or_default();
+    let home = crate::storage::teams::claude_home_dir();
     let settings_issues = validate_config_files_at(&home, &cwd, has_valid_cwd);
     let keybinding_issues = validate_keybindings_at(&home);
     let mcp_issues = validate_mcp_configs_at(&home, &cwd, has_valid_cwd);
@@ -735,7 +736,7 @@ pub async fn run_diagnostics(cwd: String) -> Result<DiagnosticsReport, String> {
     let claude_md_files = scan_claude_md_files_at(&home, &cwd, has_valid_cwd);
     let has_claude_md = claude_md_files
         .iter()
-        .any(|f| f.path.ends_with("CLAUDE.md"));
+        .any(|f| f.path.ends_with("HELIONCODER.md") || f.path.ends_with("CLAUDE.md"));
     let sandbox = check_sandbox();
     let locks = list_lock_files_at(&home);
 
@@ -1057,14 +1058,16 @@ async fn check_mcp_reg_inner() -> Option<bool> {
 fn validate_config_files_at(home: &Path, cwd: &str, has_valid_cwd: bool) -> Vec<ConfigIssue> {
     let mut issues = Vec::new();
 
-    // User scope: ~/.claude/settings.json
+    // User scope: ~/.helioncoder/settings.json
     let user_settings_path = home.join("settings.json");
     validate_json_file(&user_settings_path, "user", &mut issues);
 
-    // Project scope: {cwd}/.claude/settings.json
+    // Project scope: {cwd}/.helioncoder/settings.json, plus legacy .claude compatibility.
     if has_valid_cwd {
-        let project_settings_path = Path::new(cwd).join(".claude").join("settings.json");
+        let project_settings_path = Path::new(cwd).join(".helioncoder").join("settings.json");
         validate_json_file(&project_settings_path, "project", &mut issues);
+        let legacy_project_settings_path = Path::new(cwd).join(".claude").join("settings.json");
+        validate_json_file(&legacy_project_settings_path, "project", &mut issues);
     }
 
     issues
@@ -1159,26 +1162,30 @@ fn validate_mcp_configs_at(home: &Path, cwd: &str, has_valid_cwd: bool) -> Vec<C
     let mut issues = Vec::new();
     let home_parent = home.parent().unwrap_or(home);
 
-    // 1. ~/.claude.json → top-level mcpServers (user scope)
-    let claude_json_path = home_parent.join(".claude.json");
-    if let Some(root) = read_json_file(&claude_json_path) {
-        if let Some(servers) = root.get("mcpServers") {
-            validate_mcp_servers(servers, "user", &claude_json_path, &mut issues);
-        }
+    // 1. ~/.helioncoder.json / ~/.claude.json → top-level mcpServers (user scope)
+    for claude_json_path in [
+        home_parent.join(".helioncoder.json"),
+        home_parent.join(".claude.json"),
+    ] {
+        if let Some(root) = read_json_file(&claude_json_path) {
+            if let Some(servers) = root.get("mcpServers") {
+                validate_mcp_servers(servers, "user", &claude_json_path, &mut issues);
+            }
 
-        // 2. ~/.claude.json → projects[cwd].mcpServers (local scope)
-        if has_valid_cwd {
-            if let Some(projects) = root.get("projects").and_then(|p| p.as_object()) {
-                if let Some(proj) = projects.get(cwd).and_then(|p| p.as_object()) {
-                    if let Some(servers) = proj.get("mcpServers") {
-                        validate_mcp_servers(servers, "local", &claude_json_path, &mut issues);
+            // 2. Global JSON → projects[cwd].mcpServers (local scope)
+            if has_valid_cwd {
+                if let Some(projects) = root.get("projects").and_then(|p| p.as_object()) {
+                    if let Some(proj) = projects.get(cwd).and_then(|p| p.as_object()) {
+                        if let Some(servers) = proj.get("mcpServers") {
+                            validate_mcp_servers(servers, "local", &claude_json_path, &mut issues);
+                        }
                     }
                 }
             }
         }
     }
 
-    // 3. ~/.claude/settings.json → mcpServers (user scope fallback)
+    // 3. ~/.helioncoder/settings.json → mcpServers (user scope fallback)
     let settings_path = home.join("settings.json");
     if let Some(root) = read_json_file(&settings_path) {
         if let Some(servers) = root.get("mcpServers") {
@@ -1299,37 +1306,40 @@ fn check_env_vars() -> Vec<ConfigIssue> {
     issues
 }
 
-// ── Sub-check: CLAUDE.md files ──
+// ── Sub-check: HELIONCODER.md / legacy CLAUDE.md files ──
 
 fn scan_claude_md_files_at(home: &Path, cwd: &str, has_valid_cwd: bool) -> Vec<ClaudeMdInfo> {
     let mut files = Vec::new();
-
-    // ~/.claude/CLAUDE.md
-    let global_path = home.join("CLAUDE.md");
-    if let Ok(content) = std::fs::read_to_string(&global_path) {
-        files.push(ClaudeMdInfo {
-            path: global_path.display().to_string(),
-            size_chars: content.chars().count(),
-        });
-    }
-
-    if has_valid_cwd {
-        // {cwd}/CLAUDE.md
-        let cwd_path = Path::new(cwd).join("CLAUDE.md");
-        if let Ok(content) = std::fs::read_to_string(&cwd_path) {
+    let mut add_file = |path: std::path::PathBuf| {
+        if let Ok(content) = std::fs::read_to_string(&path) {
             files.push(ClaudeMdInfo {
-                path: cwd_path.display().to_string(),
+                path: path.display().to_string(),
                 size_chars: content.chars().count(),
             });
         }
+    };
 
-        // {cwd}/.claude/CLAUDE.md
-        let cwd_dot_path = Path::new(cwd).join(".claude").join("CLAUDE.md");
-        if let Ok(content) = std::fs::read_to_string(&cwd_dot_path) {
-            files.push(ClaudeMdInfo {
-                path: cwd_dot_path.display().to_string(),
-                size_chars: content.chars().count(),
-            });
+    // ~/.helioncoder/HELIONCODER.md and legacy ~/.helioncoder/CLAUDE.md
+    for name in ["HELIONCODER.md", "CLAUDE.md"] {
+        add_file(home.join(name));
+    }
+
+    // Legacy global Claude home, if present.
+    if let Some(user_home) = home.parent() {
+        for name in ["HELIONCODER.md", "CLAUDE.md"] {
+            add_file(user_home.join(".claude").join(name));
+        }
+    }
+
+    if has_valid_cwd {
+        let cwd_root = Path::new(cwd);
+        for path in [
+            cwd_root.join("HELIONCODER.md"),
+            cwd_root.join(".helioncoder").join("HELIONCODER.md"),
+            cwd_root.join("CLAUDE.md"),
+            cwd_root.join(".claude").join("CLAUDE.md"),
+        ] {
+            add_file(path);
         }
     }
 
