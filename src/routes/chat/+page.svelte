@@ -225,6 +225,20 @@
     return result;
   }
 
+  function cliModelValues(): string[] {
+    return uniqueModelList(getCliModels()).map((m) => m.value);
+  }
+
+  function chooseCliModelForPlatform(platformId: string | null | undefined): string | undefined {
+    const values = cliModelValues();
+    if (!values.length) return undefined;
+    const configured = getCliCurrentModel();
+    if (configured && values.includes(configured)) return configured;
+    const stored = getStoredModelForPlatform(platformId, values);
+    if (stored) return stored;
+    return values[0];
+  }
+
   function getStoredModelForPlatform(
     platformId: string | null | undefined,
     models?: readonly string[],
@@ -791,25 +805,6 @@
     return preset?.name ?? authOverview?.app_platform_name ?? pid;
   });
 
-  // ── Provider-aware model list ──
-  // When a third-party platform is active and has a models list, use that instead of CLI models.
-  // Priority: credential.models (user-configured) > preset.models (static defaults)
-  let platformModels = $derived.by((): CliModelInfo[] => {
-    const pid = store.platformId;
-    if (!pid || pid === "anthropic") return [];
-    const cred = findCredential(settings?.platform_credentials ?? [], pid);
-    const preset = PLATFORM_PRESETS.find((p) => p.id === pid);
-    const models = cred?.models?.length ? cred.models : preset?.models;
-    if (!models?.length) return [];
-    return uniqueModelList(
-      models.map((m, i) => ({
-        value: m,
-        displayName: m,
-        description: i === 0 ? "Default" : "",
-      })),
-    );
-  });
-
   let activeCliModels = $derived(
     store.remoteHostName
       ? remoteCliInfoHost === store.remoteHostName
@@ -817,22 +812,13 @@
         : []
       : uniqueModelList(getCliModels()),
   );
-  let effectiveModels = $derived(
-    store.remoteHostName
-      ? activeCliModels
-      : platformModels.length > 0
-        ? platformModels
-        : activeCliModels,
-  );
-  let statusBarModelOptions = $derived(store.remoteHostName ? activeCliModels : platformModels);
+  let effectiveModels = $derived(activeCliModels);
+  let statusBarModelOptions = $derived(activeCliModels);
   let currentEffort = $state("");
 
   function applyLocalCliModel() {
     if (store.run || runId || store.phase === "loading") return;
-    const isThirdParty = store.platformId && store.platformId !== "anthropic";
-    if (isThirdParty) return;
-    const localModel =
-      getCliCurrentModel() || settings?.default_model || lastKnownGoodAnthropicModel || "";
+    const localModel = chooseCliModelForPlatform(store.platformId) || "";
     if (localModel) {
       dbg("chat", "target local: restoring local model", { model: localModel });
       store.model = localModel;
@@ -1188,14 +1174,17 @@
 
   onMount(() => {
     const handler = async (event: Event) => {
-      const detail = (event as CustomEvent<{ platformId?: string; models?: string[] }>).detail;
+      const detail = (event as CustomEvent<{ platformId?: string }>).detail;
       try {
-        const [freshSettings] = await Promise.all([api.getUserSettings(), loadCliInfo(true)]);
+        const [freshSettings] = await Promise.all([
+          api.getUserSettings(),
+          loadCliInfo(true),
+        ]);
         settings = freshSettings;
         store.platformId = detail?.platformId ?? freshSettings.active_platform_id ?? "anthropic";
-        const models = detail?.models?.map((m) => m.trim()).filter((m) => m.length > 0) ?? [];
-        if (models.length > 0 && store.platformId && !store.run && !runId) {
-          const nextModel = getStoredModelForPlatform(store.platformId, models) ?? models[0];
+        const models = cliModelValues();
+        if (models.length > 0 && !store.remoteHostName && !store.run && !runId) {
+          const nextModel = chooseCliModelForPlatform(store.platformId) ?? models[0];
           if (!store.model || !models.includes(store.model)) {
             store.model = nextModel;
           }
@@ -1582,23 +1571,6 @@
       if (!store.platformId) {
         store.platformId = settings.active_platform_id ?? "anthropic";
       }
-      // Initialize model: for third-party platforms, use credential > preset default model
-      // Only for new sessions — if runId is set, loadRun will handle model restoration.
-      if (!store.model && !store.remoteHostName && !runId && store.phase !== "loading") {
-        const initCred = findCredential(
-          settings.platform_credentials ?? [],
-          store.platformId ?? "",
-        );
-        const initPreset = PLATFORM_PRESETS.find((p) => p.id === store.platformId);
-        const initModels = initCred?.models?.length ? initCred.models : initPreset?.models;
-        if (store.platformId !== "anthropic" && initModels?.[0]) {
-          store.model = getStoredModelForPlatform(store.platformId, initModels) ?? initModels[0];
-        } else if (store.platformId === "anthropic" && settings.default_model) {
-          // default_model is global — only valid for Anthropic native platform.
-          // Third-party platforms without a models list leave model unset.
-          store.model = settings.default_model;
-        }
-      }
       // Load auth overview for AuthSourceBadge
       api
         .getAuthOverview()
@@ -1697,15 +1669,21 @@
       }
       // Only for genuinely new chats: no run loaded/loading, no URL run param
       if (
-        cliModel &&
         !store.remoteHostName &&
         !store.run &&
         !runId &&
-        store.phase !== "loading" &&
-        !isThirdParty
+        store.phase !== "loading"
       ) {
-        dbg("chat", "set model from CLI after loadCliInfo", { cliModel, prev: store.model });
-        store.model = cliModel;
+        const models = cliModelValues();
+        const selectedModel = chooseCliModelForPlatform(store.platformId);
+        if (selectedModel && (!store.model || !models.includes(store.model))) {
+          dbg("chat", "set model from CLI after loadCliInfo", {
+            cliModel,
+            selectedModel,
+            prev: store.model,
+          });
+          store.model = selectedModel;
+        }
       }
     });
     loadCliVersionInfo();
@@ -2252,58 +2230,22 @@
     prevSt = 0;
   });
 
-  // Restore model when store.model is empty (e.g. after reset/loadRun):
-  // For third-party platforms, use the platform's default model.
-  // For Anthropic, prefer CC's current active model, fall back to our saved default_model
-  // (only if confirmed clean via three-state contamination check).
+  // Restore model when store.model is empty (e.g. after reset/loadRun).
+  // The selectable local model list is the CLI initialize response only.
   $effect(() => {
     if (!store.model) {
       // Don't overwrite model during loadRun async gap — loadRun will set it
       if (store.phase === "loading") return;
+      if (store.remoteHostName) return;
 
-      const isThirdParty = store.platformId && store.platformId !== "anthropic";
-      if (isThirdParty) {
-        const restoreCred = findCredential(
-          settings?.platform_credentials ?? [],
-          store.platformId ?? "",
-        );
-        const restorePreset = PLATFORM_PRESETS.find((p) => p.id === store.platformId);
-        const restoreModels = restoreCred?.models?.length
-          ? restoreCred.models
-          : restorePreset?.models;
-        if (restoreModels?.[0]) {
-          const restored =
-            getStoredModelForPlatform(store.platformId, restoreModels) ?? restoreModels[0];
-          dbg("chat", "restore model from credential/preset", {
-            platform: store.platformId,
-            model: restored,
-          });
-          store.model = restored;
-          return;
-        }
-      }
-      // Only fall back to default_model for Anthropic platform — otherwise
-      // default_model may belong to a different platform (cross-pollution).
-      const cliModel = getCliCurrentModel();
-      const isAnthropicPlatform = !store.platformId || store.platformId === "anthropic";
-      const rawFallback = isAnthropicPlatform ? settings?.default_model : undefined;
-      const contaminated = rawFallback ? isContaminatedDefaultModel(rawFallback) : null;
-      // Only use default_model when confirmed clean (false). true/null → skip.
-      const fallback = contaminated === false ? rawFallback : undefined;
-      // Last resort: cached last-known-good Anthropic model (only for Anthropic platform)
-      const model =
-        cliModel || fallback || (isAnthropicPlatform ? lastKnownGoodAnthropicModel : undefined);
+      const model = chooseCliModelForPlatform(store.platformId);
       if (model) {
-        // Update cache when we have a trusted source
-        if (isAnthropicPlatform && (cliModel || contaminated === false)) {
+        if (!store.platformId || store.platformId === "anthropic") {
           lastKnownGoodAnthropicModel = model;
         }
         dbg("chat", "restore model", {
-          cliModel,
-          rawFallback,
-          contaminated,
-          lastKnownGood: lastKnownGoodAnthropicModel,
-          using: model,
+          platform: store.platformId,
+          model,
         });
         store.model = model;
       }
@@ -2990,30 +2932,11 @@
     dbg("chat", "platform change", { from: store.platformId, to: platformId });
     store.platformId = platformId;
 
-    // Auto-switch model to provider's default when switching to a third-party platform
-    // Priority: credential.models (user-configured) > preset.models (static defaults)
-    const cred = findCredential(settings?.platform_credentials ?? [], platformId);
-    const preset = PLATFORM_PRESETS.find((p) => p.id === platformId);
-    const models = cred?.models?.length ? cred.models : preset?.models;
-    if (models?.length) {
-      const defaultModel = getStoredModelForPlatform(platformId, models) ?? models[0];
-      dbg("chat", "auto-switch model for platform", { platformId, model: defaultModel });
-      store.model = defaultModel;
-    } else if (platformId === "anthropic") {
-      // Switching back to Anthropic: always overwrite — don't keep third-party model;
-      // don't fallback to settings.default_model which might be contaminated.
-      const cliModel = getCliCurrentModel();
-      store.model =
-        getStoredModelForPlatform(
-          "anthropic",
-          getCliModels().map((m) => m.value),
-        ) ||
-        cliModel ||
-        "";
-      dbg("chat", "restore model on switch to anthropic", { cliModel, using: store.model });
+    const nextModel = chooseCliModelForPlatform(platformId);
+    if (nextModel) {
+      dbg("chat", "model from CLI on platform switch", { platformId, model: nextModel });
+      store.model = nextModel;
     } else {
-      // Custom/unknown platform without preset models: clear model
-      // (let CLI use whatever default it has, or the user can set manually)
       store.model = "";
     }
 
