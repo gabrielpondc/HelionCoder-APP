@@ -496,6 +496,7 @@
   }
 
   function openDiffForPath(path?: string | null) {
+    if (promptCwd) void loadWorkspaceGitSummary(promptCwd);
     if (!path) {
       requestedPreviewPath = "";
       requestedPreviewMode = "diff";

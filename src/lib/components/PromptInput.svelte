@@ -458,16 +458,20 @@
     onEffortChange?.(nextEffort);
   }
 
+  let diffableWorkspaceFileCount = $derived.by(() => {
+    if (!workspaceSummary) return 0;
+    return workspaceSummary.files.filter((file) => file.status !== "?").length;
+  });
   let workspaceChangeLabel = $derived.by(() => {
-    if (!workspaceSummary || workspaceSummary.total_files <= 0) return "";
+    if (!workspaceSummary || diffableWorkspaceFileCount <= 0) return "";
     const zh = currentLocale().startsWith("zh");
     return zh
-      ? `${workspaceSummary.total_files} 个文件已更改`
-      : `${workspaceSummary.total_files} file${workspaceSummary.total_files === 1 ? "" : "s"} changed`;
+      ? `${diffableWorkspaceFileCount} 个文件已更改`
+      : `${diffableWorkspaceFileCount} file${diffableWorkspaceFileCount === 1 ? "" : "s"} changed`;
   });
   let showEditedChangeSummary = $derived(variant !== "hero" && !!editedSummary?.hasChanges);
   let showWorkspaceChangeSummary = $derived(
-    !!workspaceSummary && workspaceSummary.total_files > 0 && !showEditedChangeSummary,
+    !!workspaceSummary && diffableWorkspaceFileCount > 0 && !showEditedChangeSummary,
   );
 
   const DOCUMENT_SKILLS = [
