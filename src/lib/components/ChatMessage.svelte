@@ -153,7 +153,7 @@
       </span>
     </div>
     <!-- Content: indented to align with text after icon -->
-    <div class="pl-7 text-sm text-foreground leading-relaxed">
+    <div class="pl-7 text-sm text-foreground leading-relaxed" data-selectable data-chat-selectable>
       {#if isUser}
         {#if attachments && attachments.length > 0}
           <div class="flex flex-wrap gap-2 mb-2">

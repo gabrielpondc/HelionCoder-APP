@@ -286,6 +286,7 @@ pub fn run() {
             commands::preview::close_preview_window,
             commands::workspace::detect_workspace_tools,
             commands::workspace::open_workspace_tool,
+            commands::workspace::open_workspace_path,
         ])
         .setup(move |app| {
             // Set up broadcast emitter (requires AppHandle, so must be in setup)
@@ -628,6 +629,9 @@ fn setup_app_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         "帮助",
         true,
         &[
+            &MenuItem::with_id(app, "cmd-check-updates", "检查更新...", true, None::<&str>)?,
+            &MenuItem::with_id(app, "cmd-update-cli", "更新 CLI", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "cmd-doctor", "运行 Doctor", true, None::<&str>)?,
             &MenuItem::with_id(app, "cmd-version", "版本信息", true, None::<&str>)?,
         ],

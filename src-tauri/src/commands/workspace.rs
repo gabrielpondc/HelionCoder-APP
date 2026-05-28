@@ -31,47 +31,94 @@ pub async fn open_workspace_tool(
     cwd: String,
     source: Option<String>,
 ) -> Result<(), String> {
-    let path = PathBuf::from(cwd.trim());
+    let path = existing_path(cwd.trim(), "Workspace path")?;
+    open_workspace_target(kind.as_str(), &path, source)
+}
+
+#[tauri::command]
+pub async fn open_workspace_path(
+    kind: String,
+    path: String,
+    cwd: String,
+    source: Option<String>,
+) -> Result<(), String> {
+    let target = resolve_workspace_path(&path, &cwd)?;
+    let launch_path = if is_shell_tool(kind.as_str()) && target.is_file() {
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| target.clone())
+    } else {
+        target
+    };
+    open_workspace_target(kind.as_str(), &launch_path, source)
+}
+
+fn existing_path(path: &str, label: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path.trim());
     if !path.exists() {
+        return Err(format!("{} does not exist", label));
+    }
+    Ok(path)
+}
+
+fn resolve_workspace_path(path: &str, cwd: &str) -> Result<PathBuf, String> {
+    let raw = PathBuf::from(path.trim());
+    let resolved = if raw.is_absolute() {
+        raw
+    } else {
+        PathBuf::from(cwd.trim()).join(raw)
+    };
+    if !resolved.exists() {
         return Err("Workspace path does not exist".to_string());
     }
+    Ok(resolved)
+}
 
+fn is_shell_tool(kind: &str) -> bool {
+    matches!(
+        kind,
+        "terminal" | "windows-terminal" | "powershell" | "iterm" | "warp" | "wezterm" | "alacritty"
+    )
+}
+
+fn open_workspace_target(kind: &str, path: &PathBuf, source: Option<String>) -> Result<(), String> {
     if !matches!(
-        kind.as_str(),
+        kind,
         "terminal" | "windows-terminal" | "powershell" | "finder" | "explorer" | "editor"
     ) {
         if let Some(source) = source.as_deref().filter(|s| !s.trim().is_empty()) {
-            if open_source_launcher(source, &path).is_ok() {
+            if open_source_launcher(source, path).is_ok() {
                 return Ok(());
             }
         }
     }
 
-    match kind.as_str() {
-        "vscode" => open_vscode(&path),
+    match kind {
+        "vscode" => open_vscode(path),
         "cursor" => open_macos_or_cli(
-            &path,
+            path,
             &["com.todesktop.230313mzl4w4u92"],
             &["Cursor"],
             &["cursor"],
         ),
         "windsurf" => open_macos_or_cli(
-            &path,
+            path,
             &["com.exafunction.windsurf"],
             &["Windsurf"],
             &["windsurf"],
         ),
-        "zed" => open_macos_or_cli(&path, &["dev.zed.Zed"], &["Zed"], &["zed"]),
+        "zed" => open_macos_or_cli(path, &["dev.zed.Zed"], &["Zed"], &["zed"]),
         "sublime" => open_macos_or_cli(
-            &path,
+            path,
             &["com.sublimetext.4", "com.sublimetext.3"],
             &["Sublime Text"],
             &["subl", "sublime_text"],
         ),
-        "trae" => open_macos_or_cli(&path, &["com.trae.app"], &["Trae"], &["trae"]),
-        "xcode" => open_macos_or_cli(&path, &["com.apple.dt.Xcode"], &["Xcode"], &[]),
+        "trae" => open_macos_or_cli(path, &["com.trae.app"], &["Trae"], &["trae"]),
+        "xcode" => open_macos_or_cli(path, &["com.apple.dt.Xcode"], &["Xcode"], &[]),
         "intellij" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.intellij", "com.jetbrains.intellij.ce"],
             &[
                 "IntelliJ IDEA",
@@ -81,72 +128,72 @@ pub async fn open_workspace_tool(
             &["idea"],
         ),
         "webstorm" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.WebStorm"],
             &["WebStorm"],
             &["webstorm"],
         ),
         "pycharm" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.pycharm", "com.jetbrains.pycharm.ce"],
             &["PyCharm", "PyCharm Professional", "PyCharm CE"],
             &["pycharm"],
         ),
-        "goland" => open_macos_or_cli(&path, &["com.jetbrains.goland"], &["GoLand"], &["goland"]),
+        "goland" => open_macos_or_cli(path, &["com.jetbrains.goland"], &["GoLand"], &["goland"]),
         "rustrover" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.rustrover"],
             &["RustRover"],
             &["rustrover"],
         ),
-        "clion" => open_macos_or_cli(&path, &["com.jetbrains.CLion"], &["CLion"], &["clion"]),
-        "rider" => open_macos_or_cli(&path, &["com.jetbrains.rider"], &["Rider"], &["rider"]),
+        "clion" => open_macos_or_cli(path, &["com.jetbrains.CLion"], &["CLion"], &["clion"]),
+        "rider" => open_macos_or_cli(path, &["com.jetbrains.rider"], &["Rider"], &["rider"]),
         "phpstorm" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.PhpStorm"],
             &["PhpStorm"],
             &["phpstorm"],
         ),
         "rubymine" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.rubymine"],
             &["RubyMine"],
             &["rubymine"],
         ),
         "datagrip" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.datagrip"],
             &["DataGrip"],
             &["datagrip"],
         ),
         "dataspell" => open_macos_or_cli(
-            &path,
+            path,
             &["com.jetbrains.dataspell"],
             &["DataSpell"],
             &["dataspell"],
         ),
         "android-studio" => open_macos_or_cli(
-            &path,
+            path,
             &["com.google.android.studio"],
             &["Android Studio"],
             &["studio"],
         ),
-        "visual-studio" => open_macos_or_cli(&path, &[], &[], &["devenv"]),
-        "notepad-plus-plus" => open_macos_or_cli(&path, &[], &[], &["notepad++"]),
-        "iterm" => open_macos_or_cli(&path, &["com.googlecode.iterm2"], &["iTerm", "iTerm2"], &[]),
-        "warp" => open_macos_or_cli(&path, &["dev.warp.Warp-Stable"], &["Warp"], &["warp"]),
+        "visual-studio" => open_macos_or_cli(path, &[], &[], &["devenv"]),
+        "notepad-plus-plus" => open_macos_or_cli(path, &[], &[], &["notepad++"]),
+        "iterm" => open_macos_or_cli(path, &["com.googlecode.iterm2"], &["iTerm", "iTerm2"], &[]),
+        "warp" => open_macos_or_cli(path, &["dev.warp.Warp-Stable"], &["Warp"], &["warp"]),
         "wezterm" => open_macos_or_cli(
-            &path,
+            path,
             &["com.github.wez.wezterm"],
             &["WezTerm"],
             &["wezterm"],
         ),
-        "alacritty" => open_macos_or_cli(&path, &["org.alacritty"], &["Alacritty"], &["alacritty"]),
-        "windows-terminal" => open_windows_terminal(&path),
-        "powershell" => open_powershell(&path),
-        "finder" | "explorer" => open_default(&path),
-        "terminal" => open_terminal(&path),
-        "editor" => open_default(&path),
+        "alacritty" => open_macos_or_cli(path, &["org.alacritty"], &["Alacritty"], &["alacritty"]),
+        "windows-terminal" => open_windows_terminal(path),
+        "powershell" => open_powershell(path),
+        "finder" | "explorer" => open_default(path),
+        "terminal" => open_terminal(path),
+        "editor" => open_default(path),
         other => Err(format!("Unsupported workspace tool: {}", other)),
     }
 }

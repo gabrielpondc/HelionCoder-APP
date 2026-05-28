@@ -3,7 +3,6 @@
   import { readFileBase64 } from "$lib/api";
   import { dbg, dbgWarn } from "$lib/utils/debug";
   import { t } from "$lib/i18n/index.svelte";
-  import { onDestroy } from "svelte";
 
   let {
     text = "",
@@ -55,56 +54,19 @@
     return () => obs.disconnect();
   });
 
-  // ── Streaming display: rAF-coalesced raw <pre>; non-streaming: full markdown render ──
-  // Streaming mode shows raw text in a <pre> (zero parse cost). DOM writes are coalesced
-  // to one per animation frame so high-frequency token deltas don't thrash text nodes.
+  // ── Streaming display: raw <pre>; non-streaming: full markdown render ──
+  // Streaming mode shows raw text in a <pre> (zero parse cost). EventMiddleware already
+  // microbatches token events to a frame, so update this text node immediately instead of
+  // adding a second rAF layer that can make WKWebView appear to hold back chunks.
   // On streaming → false, $derived recomputes html once and the {#if/:else} branch swaps.
   // Init to empty — `$state(text)` would only capture text's value at component creation,
   // and Svelte 5 warns about that pattern. The effect below runs on mount and seeds
   // displayText from current `text` (either via the !streaming branch or firstSyncDone).
   let displayText = $state("");
-  let rafId: number | null = null;
-  // Non-reactive flag: set/read here doesn't trigger Svelte effect tracking.
-  // We use this instead of reading `displayText` inside the effect — reading $state
-  // would make the rAF callback's `displayText = text` trigger an effect rerun,
-  // wasting one no-op frame per real text change.
-  let firstSyncDone = false;
-
-  function cancelPendingFrame() {
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-  }
 
   $effect(() => {
-    if (!streaming) {
-      // Leaving streaming: cancel any pending rAF, sync immediately.
-      cancelPendingFrame();
-      displayText = text;
-      firstSyncDone = false; // reset for next streaming session
-      return;
-    }
-    // First frame on (re)entering streaming with content: sync immediately to avoid
-    // visible "first character delay one frame".
-    if (!firstSyncDone && text !== "") {
-      displayText = text;
-      firstSyncDone = true;
-      return;
-    }
-    // Streaming: at most one rAF-pending update; high-frequency tokens coalesce.
-    // ⚠️ Do NOT cancel rAF in $effect cleanup — Svelte runs cleanup before each rerun, so
-    //    if text ticks faster than vsync we'd repeatedly cancel→reschedule and starve the flush.
-    if (rafId === null) {
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        displayText = text;
-      });
-    }
+    displayText = text;
   });
-
-  // Cancel pending rAF on unmount only (not on every effect rerun).
-  onDestroy(cancelPendingFrame);
 
   // Markdown rendering gate: skip when streaming OR not yet visible (lazy).
   let renderMarkdownNow = $derived(!streaming && visibleOnce);

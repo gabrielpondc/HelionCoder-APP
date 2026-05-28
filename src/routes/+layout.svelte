@@ -14,6 +14,7 @@
     softDeleteRuns,
     checkForUpdates,
     installAppUpdate,
+    runCliUpdate,
   } from "$lib/api";
   import ProjectFolderItem from "$lib/components/ProjectFolderItem.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
@@ -55,6 +56,7 @@
   import { dbg, dbgWarn } from "$lib/utils/debug";
   import { fpsCounter } from "$lib/utils/perf";
   import { PLATFORM_PRESETS } from "$lib/utils/platform-presets";
+  import { loadCliVersionInfo } from "$lib/stores";
   import { loadAgentSettingsCache } from "$lib/stores/agent-settings-cache.svelte";
   import type { PlatformCredential } from "$lib/types";
   import { TeamStore } from "$lib/stores/team-store.svelte";
@@ -88,6 +90,7 @@
   let layoutAppUpdateInfo = $state<UpdateInfo | null>(null);
   let layoutAppUpdateChecking = $state(false);
   let layoutAppUpdating = $state(false);
+  let layoutCliUpdating = $state(false);
   let themeMenuOpen = $state(false);
   let windowsAppMenuOpen = $state(false);
   let windowsAppMenuActiveGroup = $state("file");
@@ -317,10 +320,40 @@
     }
   }
 
-  async function handleLayoutAppUpdate() {
+  async function handleMenuCheckForUpdates() {
+    if (layoutAppUpdateChecking || layoutAppUpdating) return;
+    layoutAppUpdateChecking = true;
+    try {
+      const info = await checkForUpdates();
+      layoutAppUpdateInfo = info;
+      if (!info.latestVersion) {
+        window.alert(t("appUpdate_checkFailed"));
+        return;
+      }
+      if (!info.hasUpdate) {
+        window.alert(t("appUpdate_upToDate", { version: info.currentVersion || "-" }));
+        return;
+      }
+      const confirmed = window.confirm(
+        `${t("appUpdate_available", { version: info.latestVersion })}\n\n${t(
+          "appUpdate_restartConfirm",
+        )}`,
+      );
+      if (confirmed) await handleLayoutAppUpdate(true);
+    } catch (e) {
+      dbgWarn("layout", "manual update check failed", e);
+      window.alert(t("appUpdate_checkFailed"));
+    } finally {
+      layoutAppUpdateChecking = false;
+    }
+  }
+
+  async function handleLayoutAppUpdate(skipConfirm = false) {
     if (layoutAppUpdating) return;
-    const confirmed = window.confirm(t("appUpdate_restartConfirm"));
-    if (!confirmed) return;
+    if (!skipConfirm) {
+      const confirmed = window.confirm(t("appUpdate_restartConfirm"));
+      if (!confirmed) return;
+    }
     layoutAppUpdating = true;
     try {
       const result = await installAppUpdate(
@@ -334,6 +367,27 @@
     } catch (e) {
       layoutAppUpdating = false;
       window.alert(String((e as Error)?.message ?? e));
+    }
+  }
+
+  async function handleMenuCliUpdate() {
+    if (layoutCliUpdating) return;
+    layoutCliUpdating = true;
+    try {
+      const result = await runCliUpdate();
+      await loadCliVersionInfo();
+      const text =
+        result.output ||
+        (result.success
+          ? currentLocale().startsWith("zh")
+            ? "CLI 更新命令已完成。"
+            : "CLI update finished."
+          : t("infoPanel_updateFailed"));
+      window.alert(text);
+    } catch (e) {
+      window.alert(String((e as Error)?.message ?? e));
+    } finally {
+      layoutCliUpdating = false;
     }
   }
 
@@ -456,6 +510,29 @@
         id: "help",
         label: zh ? "帮助" : "Help",
         items: [
+          {
+            label: layoutAppUpdateChecking
+              ? zh
+                ? "正在检查更新..."
+                : "Checking for Updates..."
+              : zh
+                ? "检查更新..."
+                : "Check for Updates...",
+            command: "check-updates",
+            disabled: layoutAppUpdateChecking || layoutAppUpdating,
+          },
+          {
+            label: layoutCliUpdating
+              ? zh
+                ? "正在更新 CLI..."
+                : "Updating CLI..."
+              : zh
+                ? "更新 CLI"
+                : "Update CLI",
+            command: "update-cli",
+            disabled: layoutCliUpdating,
+          },
+          { type: "separator" },
           { label: zh ? "运行 Doctor" : "Run Doctor", command: "doctor" },
           { label: zh ? "版本信息" : "Version Info", command: "version" },
         ],
@@ -561,6 +638,12 @@
         break;
       case "window-close":
         await closeWindow();
+        break;
+      case "check-updates":
+        await handleMenuCheckForUpdates();
+        break;
+      case "update-cli":
+        await handleMenuCliUpdate();
         break;
       case "doctor":
         commandPaletteOpen = true;
@@ -1234,6 +1317,8 @@
     const platformText = `${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`;
     isMacDesktop = isDesktopApp && /mac/i.test(platformText);
     isWindowsDesktop = isDesktopApp && /win/i.test(platformText);
+    document.documentElement.classList.toggle("desktop-app", isDesktopApp);
+    document.body.classList.toggle("desktop-app", isDesktopApp);
     document.documentElement.classList.toggle("desktop-window-transparent", isGlassDesktop);
     document.body.classList.toggle("desktop-window-transparent", isGlassDesktop);
     document.documentElement.classList.toggle("windows-desktop", isWindowsDesktop);
@@ -1762,6 +1847,11 @@
     openConversationMenuAt(event.clientX, event.clientY, conv);
   }
 
+  function handleGlobalContextMenu(event: MouseEvent) {
+    if (!isDesktopApp || event.defaultPrevented) return;
+    event.preventDefault();
+  }
+
   function openConversationActionMenu(event: MouseEvent | KeyboardEvent, conv: ConversationGroup) {
     event.preventDefault();
     event.stopPropagation();
@@ -2112,6 +2202,7 @@
   let isPluginsPage = $derived(currentPath.startsWith("/plugins"));
   let isExplorerPage = $derived(currentPath.startsWith("/explorer"));
   let isMemoryPage = $derived(currentPath.startsWith("/memory"));
+  let isSettingsPage = $derived(currentPath.startsWith("/settings"));
 
   // Plugin sidebar navigation (shown when on /plugins route)
   const pluginSections = [
@@ -2458,7 +2549,7 @@
   {/each}
 {/snippet}
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} oncontextmenu={handleGlobalContextMenu} />
 
 {#if isDesktopApp && !isWindowsDesktop}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2537,11 +2628,11 @@
   <aside
     class="relative z-10 flex shrink-0 overflow-hidden border-r border-sidebar-border text-sidebar-foreground transition-[width,opacity,transform] duration-200 ease-out {isGlassDesktop
       ? 'desktop-sidebar-glass'
-      : 'bg-sidebar'} {sidebarOpen
+      : 'bg-sidebar'} {!isSettingsPage && sidebarOpen
       ? 'opacity-100'
       : 'pointer-events-none -translate-x-2 opacity-0'}"
-    style:width="{sidebarOpen ? sidebarWidth : 0}px"
-    aria-hidden={!sidebarOpen}
+    style:width="{!isSettingsPage && sidebarOpen ? sidebarWidth : 0}px"
+    aria-hidden={!sidebarOpen || isSettingsPage}
   >
     <!-- A. Icon Rail -->
     <div class="hidden w-[42px] flex-col items-center border-r border-sidebar-border bg-sidebar">
@@ -2657,7 +2748,7 @@
           <button
             class="text-xs text-muted-foreground hover:text-muted-foreground transition-colors cursor-pointer"
             onclick={() => (showAbout = true)}
-            title="About HelionCoder">v0.5.2</button
+            title="About HelionCoder">v0.5.3</button
           >
         </div>
         <div class="relative mx-auto mb-0.5">
@@ -3850,7 +3941,7 @@
                 onkeydown={(e) => e.key === "Escape" && (themeMenuOpen = false)}
               ></div>
               <div
-                class="absolute bottom-full right-0 z-50 mb-2 w-40 rounded-lg border border-sidebar-border bg-popover p-1 shadow-lg"
+                class="absolute bottom-full right-0 z-50 mb-2 w-40 rounded-lg border border-border/55 bg-popover/72 p-1 text-popover-foreground shadow-2xl ring-1 ring-black/5 backdrop-blur-2xl dark:border-white/10 dark:bg-[#202124]/72 dark:ring-black/25"
               >
                 {#each [{ id: "dark", label: currentLocale().startsWith("zh") ? "深色" : "Dark" }, { id: "light", label: currentLocale().startsWith("zh") ? "浅色" : "Light" }, { id: "system", label: currentLocale().startsWith("zh") ? "跟随系统" : "Match system" }] as item}
                   <button
@@ -3881,7 +3972,7 @@
     </div>
   </aside>
 
-  {#if sidebarOpen}
+  {#if sidebarOpen && !isSettingsPage}
     <button
       type="button"
       class="absolute top-0 bottom-0 z-40 w-3 cursor-col-resize bg-transparent transition-colors hover:bg-primary/10 active:bg-primary/20"
@@ -3893,7 +3984,7 @@
   {/if}
 
   <!-- Ghost line during sidebar drag (zero-reflow preview) -->
-  {#if sidebarResizing}
+  {#if sidebarResizing && !isSettingsPage}
     <div
       bind:this={sidebarGhostEl}
       class="fixed top-0 bottom-0 z-[9999] pointer-events-none bg-primary"
@@ -3904,16 +3995,19 @@
 
   <!-- Main content -->
   <div
-    class="relative z-20 flex min-w-0 flex-1 flex-col overflow-hidden bg-background transition-[margin,padding,border-radius,box-shadow] duration-200 ease-out {sidebarOpen
+    class="relative z-20 flex min-w-0 flex-1 flex-col overflow-hidden bg-background transition-[margin,padding,border-radius,box-shadow] duration-200 ease-out {!isSettingsPage &&
+    sidebarOpen
       ? 'desktop-main-surface'
-      : ''} {!sidebarOpen ? 'pt-12' : ''}"
+      : ''} {!sidebarOpen && !isSettingsPage ? 'pt-12' : ''}"
   >
     <div
       class="titlebar-drag absolute left-0 right-0 top-0 z-40 flex h-12 items-center gap-1.5 bg-background/75 backdrop-blur transition-[opacity,transform] duration-200 ease-out {isWindowsDesktop
         ? 'pr-[156px]'
-        : 'pr-4'} {reserveMacTrafficLights ? 'pl-[92px]' : 'pl-3'} {sidebarOpen
-        ? 'pointer-events-none -translate-x-2 opacity-0'
-        : 'opacity-100'}"
+        : 'pr-4'} {reserveMacTrafficLights ? 'pl-[92px]' : 'pl-3'} {isSettingsPage
+        ? 'hidden'
+        : sidebarOpen
+          ? 'pointer-events-none -translate-x-2 opacity-0'
+          : 'opacity-100'}"
       data-tauri-drag-region
       aria-hidden={sidebarOpen}
     >
@@ -4059,7 +4153,9 @@
     {/if}
 
     <!-- Page content -->
-    <main class="flex-1 overflow-y-auto">
+    <main
+      class="flex-1 min-h-0 {isChatPage || isSettingsPage ? 'overflow-hidden' : 'overflow-y-auto'}"
+    >
       {@render children()}
     </main>
   </div>
@@ -4069,7 +4165,7 @@
   <div
     data-windows-app-menu
     data-no-window-drag
-    class="titlebar-no-drag fixed left-2 top-9 z-[120] flex max-h-[calc(100vh-3rem)] overflow-hidden rounded-md border border-white/10 bg-[#2b2b2d]/98 py-1 text-[13px] text-[#e8e8e8] shadow-2xl ring-1 ring-black/30 backdrop-blur-xl"
+    class="titlebar-no-drag fixed left-2 top-9 z-[120] flex max-h-[calc(100vh-3rem)] overflow-hidden rounded-md border border-border/50 bg-popover/74 py-1 text-[13px] text-popover-foreground shadow-2xl ring-1 ring-black/10 backdrop-blur-2xl dark:border-white/10 dark:bg-[#232326]/72 dark:ring-black/30"
     role="menu"
   >
     <div class="w-44 py-0.5">
@@ -4078,15 +4174,15 @@
           type="button"
           class="flex h-8 w-full items-center gap-3 px-4 text-left transition-colors {windowsAppMenuActiveGroup ===
           group.id
-            ? 'bg-[#3d3d3d] text-white'
-            : 'text-[#e3e3e3] hover:bg-[#383838] hover:text-white'}"
+            ? 'bg-accent/75 text-accent-foreground'
+            : 'text-popover-foreground/82 hover:bg-accent/55 hover:text-popover-foreground'}"
           role="menuitem"
           onpointerenter={() => (windowsAppMenuActiveGroup = group.id)}
           onclick={() => (windowsAppMenuActiveGroup = group.id)}
         >
           <span class="min-w-0 flex-1 truncate">{group.label}</span>
           <svg
-            class="h-3.5 w-3.5 shrink-0 text-[#bdbdbd]"
+            class="h-3.5 w-3.5 shrink-0 text-muted-foreground"
             viewBox="0 0 16 16"
             fill="none"
             stroke="currentColor"
@@ -4099,21 +4195,21 @@
       {/each}
     </div>
 
-    <div class="min-w-64 border-l border-white/10 py-0.5">
+    <div class="min-w-64 border-l border-border/45 py-0.5 dark:border-white/10">
       {#each windowsAppMenuActiveItems as item}
         {#if item.type === "separator"}
-          <div class="my-1 h-px bg-white/10"></div>
+          <div class="my-1 h-px bg-border/55 dark:bg-white/10"></div>
         {:else}
           <button
             type="button"
-            class="flex h-8 w-full items-center gap-4 px-4 text-left text-[#e3e3e3] transition-colors hover:bg-[#3d3d3d] hover:text-white disabled:pointer-events-none disabled:opacity-45"
+            class="flex h-8 w-full items-center gap-4 px-4 text-left text-popover-foreground/86 transition-colors hover:bg-accent/60 hover:text-popover-foreground disabled:pointer-events-none disabled:opacity-45"
             role="menuitem"
             disabled={item.disabled}
             onclick={() => void executeWindowsAppMenuCommand(item.command)}
           >
             <span class="min-w-0 flex-1 truncate">{item.label}</span>
             {#if item.shortcut}
-              <span class="shrink-0 text-[11px] text-[#a8a8a8]">{item.shortcut}</span>
+              <span class="shrink-0 text-[11px] text-muted-foreground">{item.shortcut}</span>
             {/if}
           </button>
         {/if}

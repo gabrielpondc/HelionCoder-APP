@@ -28,6 +28,7 @@
     onLoadFailed,
     onCloseDiff,
     onDirtyChange,
+    onOpenInWorkspaceTool,
   }: {
     cwd: string;
     path: string;
@@ -42,6 +43,8 @@
     onCloseDiff?: () => void;
     /** Fires whenever fileDirty transitions; parents can use this for navigation guards. */
     onDirtyChange?: (dirty: boolean) => void;
+    /** Open this path with the user's preferred workspace IDE/editor. */
+    onOpenInWorkspaceTool?: (path: string) => void | Promise<void>;
   } = $props();
 
   // ── State ──
@@ -214,9 +217,9 @@
     diffLoading = true;
     diffContent = "";
     try {
-      let content = await getGitDiff(c, false, p);
+      let content = await getGitDiff(c, false, p || undefined);
       if (!content.trim()) {
-        content = await getGitDiff(c, true, p);
+        content = await getGitDiff(c, true, p || undefined);
       }
       if (seq !== loadSeq) return;
       diffContent = content;
@@ -272,8 +275,8 @@
     // initiate new IPC loads on cwd/path/mode/scopeKey changes.
     if (!_active) return;
 
-    // Reset on remote or empty path
-    if (_isRemote || !_path) {
+    // Reset on remote or empty path. Diff mode allows empty path to mean all changes.
+    if (_isRemote || (!_path && _mode !== "diff")) {
       ++loadSeq;
       fileLoading = false;
       diffLoading = false;
@@ -317,7 +320,7 @@
 
   // ── Derived ──
   let kind = $derived(classifyPath(path));
-  let displayName = $derived(path ? pathFileName(path) : "");
+  let displayName = $derived(path ? pathFileName(path) : t("preview_allChanges"));
   let canSave = $derived(editable && !isRemote && !fileSaving);
 
   // CodeEditor visibility: only show when actually viewing a code file. CodeEditor itself
@@ -403,11 +406,33 @@
           {fileSaving ? t("explorer_saving") : t("explorer_save")}
         </button>
       {/if}
+      {#if onOpenInWorkspaceTool}
+        <button
+          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onclick={() => void onOpenInWorkspaceTool?.(path)}
+          title={t("toolActivity_openInIde")}
+          aria-label={t("toolActivity_openInIde")}
+        >
+          <svg
+            class="h-3.5 w-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M15 3h6v6" />
+            <path d="M10 14 21 3" />
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          </svg>
+        </button>
+      {/if}
     </div>
   {/if}
 
   <!-- Diff header (only in diff mode) -->
-  {#if !isRemote && path && mode === "diff"}
+  {#if !isRemote && mode === "diff"}
     <div class="flex items-center gap-2 border-b px-3 py-1.5 shrink-0">
       {#if onCloseDiff}
         <button
@@ -426,7 +451,31 @@
           >
         </button>
       {/if}
-      <span class="text-sm font-medium text-foreground flex-1 min-w-0 truncate">{path}</span>
+      <span class="text-sm font-medium text-foreground flex-1 min-w-0 truncate">
+        {path || t("preview_allChanges")}
+      </span>
+      {#if path && onOpenInWorkspaceTool}
+        <button
+          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onclick={() => void onOpenInWorkspaceTool?.(path)}
+          title={t("toolActivity_openInIde")}
+          aria-label={t("toolActivity_openInIde")}
+        >
+          <svg
+            class="h-3.5 w-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M15 3h6v6" />
+            <path d="M10 14 21 3" />
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          </svg>
+        </button>
+      {/if}
     </div>
   {/if}
 
@@ -468,24 +517,6 @@
             /></svg
           >
           <p class="text-sm text-muted-foreground">{t("preview_remoteUnsupported")}</p>
-        </div>
-      </div>
-    {:else if !path}
-      <div class="absolute inset-0 flex items-center justify-center p-4 bg-background">
-        <div class="flex flex-col items-center gap-2 text-center">
-          <svg
-            class="h-8 w-8 text-muted-foreground/30"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path
-              d="M14 2v4a2 2 0 0 0 2 2h4"
-            /></svg
-          >
-          <p class="text-sm text-muted-foreground">{t("filesPanel_noPreviewSelected")}</p>
         </div>
       </div>
     {:else if mode === "diff"}
@@ -551,6 +582,24 @@
             <p class="text-sm text-muted-foreground">{t("explorer_noChanges")}</p>
           </div>
         {/if}
+      </div>
+    {:else if !path}
+      <div class="absolute inset-0 flex items-center justify-center p-4 bg-background">
+        <div class="flex flex-col items-center gap-2 text-center">
+          <svg
+            class="h-8 w-8 text-muted-foreground/30"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path
+              d="M14 2v4a2 2 0 0 0 2 2h4"
+            /></svg
+          >
+          <p class="text-sm text-muted-foreground">{t("filesPanel_noPreviewSelected")}</p>
+        </div>
       </div>
     {:else if fileLoading}
       <div class="absolute inset-0 flex items-center justify-center bg-background">

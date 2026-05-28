@@ -194,8 +194,8 @@ describe("EventMiddleware", () => {
       const store = mockStore();
       mw.subscribeCurrent("run-1", store as any);
 
-      const ev1 = makeBusEvent("run-1", "message_delta", { text: "a" });
-      const ev2 = makeBusEvent("run-1", "message_delta", { text: "b" });
+      const ev1 = makeBusEvent("run-1", "tool_start", { tool_use_id: "t1" });
+      const ev2 = makeBusEvent("run-1", "tool_end", { tool_use_id: "t1", status: "success" });
       const ev3 = makeBusEvent("run-1", "message_complete", { message_id: "m1", text: "ab" });
 
       fireBusEvent(ev1);
@@ -211,6 +211,39 @@ describe("EventMiddleware", () => {
       // All 3 events delivered as a single batch
       expect(store.applyEventBatch).toHaveBeenCalledWith([ev1, ev2, ev3]);
       expect(store.applyEvent).not.toHaveBeenCalled();
+    });
+
+    it("applies text deltas immediately for realtime streaming", async () => {
+      await mw.start();
+      const store = mockStore();
+      mw.subscribeCurrent("run-1", store as any);
+
+      const ev1 = makeBusEvent("run-1", "message_delta", { text: "a" });
+      const ev2 = makeBusEvent("run-1", "thinking_delta", { text: "b" });
+
+      fireBusEvent(ev1);
+      fireBusEvent(ev2);
+
+      expect(store.applyEvent).toHaveBeenNthCalledWith(1, ev1);
+      expect(store.applyEvent).toHaveBeenNthCalledWith(2, ev2);
+      expect(store.applyEventBatch).not.toHaveBeenCalled();
+    });
+
+    it("flushes pending non-text events before an immediate text delta", async () => {
+      await mw.start();
+      const store = mockStore();
+      mw.subscribeCurrent("run-1", store as any);
+
+      const ev1 = makeBusEvent("run-1", "tool_start", { tool_use_id: "t1" });
+      const ev2 = makeBusEvent("run-1", "tool_end", { tool_use_id: "t1", status: "success" });
+      const ev3 = makeBusEvent("run-1", "message_delta", { text: "a" });
+
+      fireBusEvent(ev1);
+      fireBusEvent(ev2);
+      fireBusEvent(ev3);
+
+      expect(store.applyEventBatch).toHaveBeenCalledWith([ev1, ev2]);
+      expect(store.applyEvent).toHaveBeenCalledWith(ev3);
     });
 
     it("uses applyEvent for single-event batch", async () => {
@@ -254,7 +287,7 @@ describe("EventMiddleware", () => {
       mw.subscribeCurrent("run-1", store as any);
 
       // Buffer an event
-      fireBusEvent(makeBusEvent("run-1", "message_delta", { text: "x" }));
+      fireBusEvent(makeBusEvent("run-1", "run_state", { state: "running" }));
 
       // Unsubscribe before flush
       mw.unsubscribe("run-1");
@@ -296,9 +329,9 @@ describe("EventMiddleware", () => {
       mw.subscribe("run-2", okStore as any);
 
       // Buffer events for both
-      fireBusEvent(makeBusEvent("run-1", "message_delta", { text: "a" }));
-      fireBusEvent(makeBusEvent("run-1", "message_delta", { text: "b" }));
-      fireBusEvent(makeBusEvent("run-2", "message_delta", { text: "c" }));
+      fireBusEvent(makeBusEvent("run-1", "tool_start", { tool_use_id: "a" }));
+      fireBusEvent(makeBusEvent("run-1", "tool_end", { tool_use_id: "a", status: "success" }));
+      fireBusEvent(makeBusEvent("run-2", "run_state", { state: "running" }));
 
       vi.advanceTimersByTime(16);
 
@@ -325,7 +358,7 @@ describe("EventMiddleware", () => {
 
       // Fire 500 events (= MAX_BUFFER_SIZE)
       for (let i = 0; i < 500; i++) {
-        fireBusEvent(makeBusEvent("run-1", "message_delta", { text: `chunk-${i}` }));
+        fireBusEvent(makeBusEvent("run-1", "tool_start", { tool_use_id: `tool-${i}` }));
       }
 
       // Should have flushed synchronously — no need to advance timers

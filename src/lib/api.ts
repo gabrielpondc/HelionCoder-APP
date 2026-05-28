@@ -1156,6 +1156,16 @@ export async function openWorkspaceTool(
   return invoke<void>("open_workspace_tool", { kind, cwd, source: source ?? null });
 }
 
+export async function openWorkspacePath(
+  kind: string,
+  path: string,
+  cwd: string,
+  source?: string | null,
+): Promise<void> {
+  dbg("api", "openWorkspacePath", { kind, path, cwd, source });
+  return invoke<void>("open_workspace_path", { kind, path, cwd, source: source ?? null });
+}
+
 // ── App Updates ──
 
 export async function checkForUpdates(): Promise<import("./types").UpdateInfo> {

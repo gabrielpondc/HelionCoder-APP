@@ -221,6 +221,21 @@ export class EventMiddleware {
     const store = this._subscriptions.get(ev.run_id);
     if (!store) return;
 
+    // Text deltas are the visible stream. Apply them immediately so the app does not
+    // accumulate SSE/WS chunks behind a timer; non-text events still batch to reduce churn.
+    if (ev.type === "message_delta" || ev.type === "thinking_delta") {
+      const pending = this._batchBuffer.get(ev.run_id);
+      if (pending && pending.length > 0) {
+        this._flushRun(ev.run_id);
+      }
+      try {
+        store.applyEvent(ev);
+      } catch (e) {
+        dbgWarn("middleware", `direct stream event error for run ${ev.run_id}:`, e);
+      }
+      return;
+    }
+
     // Push to batch buffer
     let buf = this._batchBuffer.get(ev.run_id);
     if (!buf) {
@@ -316,19 +331,30 @@ export class EventMiddleware {
   private _flush(): void {
     this._flushScheduled = false;
     for (const [runId, events] of this._batchBuffer) {
-      const store = this._subscriptions.get(runId);
-      if (!store) continue;
-      try {
-        if (events.length === 1) {
-          store.applyEvent(events[0]);
-        } else if (events.length > 1) {
-          store.applyEventBatch(events);
-        }
-      } catch (e) {
-        dbgWarn("middleware", `flush error for run ${runId}:`, e);
-      }
+      this._deliverBufferedEvents(runId, events);
     }
     this._batchBuffer.clear();
+  }
+
+  private _flushRun(runId: string): void {
+    const events = this._batchBuffer.get(runId);
+    if (!events || events.length === 0) return;
+    this._batchBuffer.delete(runId);
+    this._deliverBufferedEvents(runId, events);
+  }
+
+  private _deliverBufferedEvents(runId: string, events: BusEvent[]): void {
+    const store = this._subscriptions.get(runId);
+    if (!store) return;
+    try {
+      if (events.length === 1) {
+        store.applyEvent(events[0]);
+      } else if (events.length > 1) {
+        store.applyEventBatch(events);
+      }
+    } catch (e) {
+      dbgWarn("middleware", `flush error for run ${runId}:`, e);
+    }
   }
 }
 

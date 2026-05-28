@@ -61,6 +61,7 @@
     appMode = "code",
     requestedPreviewPath = $bindable(null as string | null),
     requestedPreviewMode = $bindable(null as PreviewMode | null),
+    onOpenPathInWorkspaceTool,
   }: {
     timeline: TimelineEntry[];
     tools: HookEvent[];
@@ -87,6 +88,8 @@
     requestedPreviewPath?: string | null;
     /** External request for preview vs git diff mode. */
     requestedPreviewMode?: PreviewMode | null;
+    /** Open a local file with the user's preferred workspace IDE/editor. */
+    onOpenPathInWorkspaceTool?: (path: string) => void | Promise<void>;
   } = $props();
 
   // ── Tab state ──
@@ -145,8 +148,7 @@
     return isOfficePreviewable(getExtension(path));
   }
 
-  function openDiff(path: string) {
-    if (!path) return;
+  function openDiff(path = "") {
     previewPath = path;
     previewMode = "diff";
     activeTab = "files";
@@ -154,7 +156,7 @@
 
   // External preview request → set path + switch tab; consume by setting $bindable to null
   $effect(() => {
-    if (requestedPreviewPath) {
+    if (requestedPreviewMode || requestedPreviewPath !== null) {
       previewPath = requestedPreviewPath;
       previewMode = requestedPreviewMode ?? "preview";
       activeTab = "files";
@@ -162,13 +164,6 @@
         lockedExpanded = true;
       }
       requestedPreviewPath = null;
-      requestedPreviewMode = null;
-    } else if (requestedPreviewMode) {
-      previewMode = requestedPreviewMode;
-      activeTab = "files";
-      if (collapsed && !pinned && compactMode !== "hidden") {
-        lockedExpanded = true;
-      }
       requestedPreviewMode = null;
     }
   });
@@ -1232,46 +1227,76 @@
                   <div class="space-y-1">
                     {#each editedSummary.files.slice(0, 4) as file (file.path)}
                       {@const isDiffSelected = previewMode === "diff" && previewPath === file.path}
-                      <button
-                        type="button"
-                        class="w-full rounded-md border px-2 py-1.5 text-left transition-colors {isDiffSelected
+                      <div
+                        class="relative rounded-md border transition-colors {isDiffSelected
                           ? 'border-primary/50 bg-primary/10'
                           : 'border-border/50 hover:bg-accent/40'}"
-                        onclick={() => openDiff(file.path)}
                         title={file.path}
                       >
-                        <div class="flex items-center gap-1.5">
-                          <span
-                            class="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground"
-                            >{shortPath(file.path)}</span
-                          >
-                          {#if file.additions > 0}
-                            <span class="text-[10px] tabular-nums text-emerald-500"
-                              >+{file.additions}</span
+                        <button
+                          type="button"
+                          class="w-full px-2 py-1.5 pr-8 text-left"
+                          onclick={() => openDiff(file.path)}
+                        >
+                          <div class="flex items-center gap-1.5">
+                            <span
+                              class="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground"
+                              >{shortPath(file.path)}</span
                             >
-                          {/if}
-                          {#if file.deletions > 0}
-                            <span class="text-[10px] tabular-nums text-red-400"
-                              >-{file.deletions}</span
-                            >
-                          {/if}
-                        </div>
-                        {#if patchPreviewLines(file).length > 0}
-                          <div
-                            class="mt-1 overflow-hidden rounded border border-border/40 bg-muted/30 px-1.5 py-1 font-mono text-[10px] leading-4"
-                          >
-                            {#each patchPreviewLines(file) as line}
-                              <div class="truncate {patchLineClass(line)}">{line}</div>
-                            {/each}
+                            {#if file.additions > 0}
+                              <span class="text-[10px] tabular-nums text-emerald-500"
+                                >+{file.additions}</span
+                              >
+                            {/if}
+                            {#if file.deletions > 0}
+                              <span class="text-[10px] tabular-nums text-red-400"
+                                >-{file.deletions}</span
+                              >
+                            {/if}
                           </div>
+                          {#if patchPreviewLines(file).length > 0}
+                            <div
+                              class="mt-1 overflow-hidden rounded border border-border/40 bg-muted/30 px-1.5 py-1 font-mono text-[10px] leading-4"
+                            >
+                              {#each patchPreviewLines(file) as line}
+                                <div class="truncate {patchLineClass(line)}">{line}</div>
+                              {/each}
+                            </div>
+                          {/if}
+                        </button>
+                        {#if onOpenPathInWorkspaceTool && !isRemote}
+                          <button
+                            type="button"
+                            class="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-background/80 hover:text-foreground"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              void onOpenPathInWorkspaceTool?.(file.path);
+                            }}
+                            title={t("toolActivity_openInIde")}
+                            aria-label={t("toolActivity_openInIde")}
+                          >
+                            <svg
+                              class="h-3.5 w-3.5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M15 3h6v6" />
+                              <path d="M10 14 21 3" />
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            </svg>
+                          </button>
                         {/if}
-                      </button>
+                      </div>
                     {/each}
                   </div>
                   <button
                     type="button"
                     class="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 transition-colors"
-                    onclick={() => openDiff(editedSummary.files[0]?.path ?? "")}
+                    onclick={() => openDiff()}
                   >
                     {t("toolActivity_viewChanges")}
                   </button>
@@ -1295,6 +1320,7 @@
                 {isRemote}
                 scopeKey={runId}
                 active={activeTab === "files"}
+                onOpenInWorkspaceTool={onOpenPathInWorkspaceTool}
                 onCloseDiff={() => (previewMode = "preview")}
               />
             </div>

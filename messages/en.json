@@ -521,6 +521,7 @@
   "chat_roleYou": "You",
   "chat_roleClaude": "HelionCoder",
   "chat_copyMessage": "Copy message",
+  "chat_addSelectionToConversation": "Add to conversation",
   "chat_thoughtProcess": "Thought process",
 
   "tool_interrupted": "interrupted",
@@ -808,6 +809,7 @@
   "common_redirecting": "Redirecting to chat...",
   "common_edit": "Edit",
   "common_preview": "Preview",
+  "common_open": "Open",
 
   "explorer_closeDiff": "Close diff",
   "explorer_noChanges": "No changes",
@@ -995,7 +997,7 @@
   "cmd_error": "Error",
   "cmd_doctor": "Doctor",
   "cmd_versionInfo": "Version Info",
-  "cmd_versionContent": "HelionCoder Desktop v0.5.2\nTauri v2\nSvelte 5",
+  "cmd_versionContent": "HelionCoder Desktop v0.5.3\nTauri v2\nSvelte 5",
   "cmd_noChanges": "No changes",
   "cmd_workingTreeClean": "Working tree clean",
   "cmd_cliInstalled": "Installed",
@@ -1058,12 +1060,14 @@
   "toolActivity_tabTasks": "Tasks",
   "toolActivity_editedFiles": "Edited files",
   "toolActivity_viewChanges": "View changes",
+  "toolActivity_openInIde": "Open in preferred editor",
 
   "bgTask_empty": "No background tasks",
   "filesPanel_noFiles": "No file operations yet",
   "filesPanel_notLocatable": "Cannot locate the corresponding tool call",
   "filesPanel_noPreviewSelected": "Select a file above to preview",
   "filesPanel_reviewChanges": "Review changes",
+  "preview_allChanges": "All changes",
   "preview_remoteUnsupported": "File preview is not supported for remote sessions",
   "preview_tooLarge": "File too large to preview inline. Open in Explorer.",
   "toolDetail_previewFile": "Open in preview pane",
@@ -1375,6 +1379,7 @@
   "toast_permissionPersistFailed": "Mode active for this session only — save failed",
   "toast_permissionChangeFailed": "Permission mode change failed — save error",
   "toast_rewindSuccess": "Changes reverted",
+  "toast_selectionQuoted": "Added to conversation",
   "error_rewindNoCheckpoint": "No file checkpoint found to rewind to",
   "error_rewindFailed": "Failed to rewind files",
 

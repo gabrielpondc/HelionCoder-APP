@@ -108,6 +108,13 @@ body.windows-desktop {
   --windows-titlebar-control-safe-area: 132px;
 }
 
+html.desktop-app,
+body.desktop-app {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .windows-titlebar-safe-right {
   padding-right: max(1rem, calc(0.75rem + var(--windows-titlebar-control-safe-area))) !important;
 }

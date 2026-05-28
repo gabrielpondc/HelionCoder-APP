@@ -1997,6 +1997,19 @@
     });
   }
 
+  export function appendBlock(text: string) {
+    const next = text.trim();
+    if (!next) return;
+    inputText = inputText.trimEnd() ? `${inputText.trimEnd()}\n\n${next}` : next;
+    requestAnimationFrame(() => {
+      autoResize();
+      textareaEl?.focus();
+      if (textareaEl) {
+        textareaEl.selectionStart = textareaEl.selectionEnd = textareaEl.value.length;
+      }
+    });
+  }
+
   export function triggerSend() {
     handleSend();
   }

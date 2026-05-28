@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/.github/schemas/tauri-v2.json",
   "productName": "HelionCoder",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "identifier": "com.helioncoder.desktop",
   "build": {
     "frontendDist": "../build",

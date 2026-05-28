@@ -61,6 +61,7 @@
   import type { PromptInputSnapshot } from "$lib/types";
   import MarkdownContent from "$lib/components/MarkdownContent.svelte";
   import HookReviewCard from "$lib/components/HookReviewCard.svelte";
+  import SelectionQuotePopover from "$lib/components/SelectionQuotePopover.svelte";
   import ContextUsageGrid from "$lib/components/ContextUsageGrid.svelte";
   import CostSummaryView from "$lib/components/CostSummaryView.svelte";
   import { parseContextMarkdown } from "$lib/utils/context-parser";
@@ -94,6 +95,7 @@
   import { truncate, cwdDisplayLabel, formatTokenCount } from "$lib/utils/format";
   import { mapSettled } from "$lib/utils/async-utils";
   import { uuid } from "$lib/utils/uuid";
+  import { formatSelectionQuote } from "$lib/utils/selection-quote";
   import RewindModal from "$lib/components/RewindModal.svelte";
   import FolderPicker from "$lib/components/FolderPicker.svelte";
   import type { ElementSelection } from "$lib/types";
@@ -413,6 +415,15 @@
     "editor",
     "terminal",
   ];
+  const SHELL_WORKSPACE_TOOL_IDS = new Set([
+    "terminal",
+    "windows-terminal",
+    "powershell",
+    "iterm",
+    "warp",
+    "wezterm",
+    "alacritty",
+  ]);
   let workspaceTools = $state<api.WorkspaceTool[]>([]);
   let workspaceToolsLoaded = $state(false);
   let editedFilesSummary = $derived(summarizeEditedFiles(store.timeline));
@@ -485,16 +496,13 @@
   }
 
   function openDiffForPath(path?: string | null) {
-    const target =
-      path ||
-      editedFilesSummary.activeFile?.path ||
-      editedFilesSummary.files[0]?.path ||
-      workspaceGitSummary?.files[0]?.path;
-    if (!target) {
+    if (!path) {
+      requestedPreviewPath = "";
+      requestedPreviewMode = "diff";
       requestSidebarTab("files");
       return;
     }
-    requestedPreviewPath = target;
+    requestedPreviewPath = path;
     requestedPreviewMode = "diff";
     requestSidebarTab("files");
   }
@@ -1176,10 +1184,7 @@
     const handler = async (event: Event) => {
       const detail = (event as CustomEvent<{ platformId?: string }>).detail;
       try {
-        const [freshSettings] = await Promise.all([
-          api.getUserSettings(),
-          loadCliInfo(true),
-        ]);
+        const [freshSettings] = await Promise.all([api.getUserSettings(), loadCliInfo(true)]);
         settings = freshSettings;
         store.platformId = detail?.platformId ?? freshSettings.active_platform_id ?? "anthropic";
         const models = cliModelValues();
@@ -1668,12 +1673,7 @@
         lastKnownGoodAnthropicModel = cliModel;
       }
       // Only for genuinely new chats: no run loaded/loading, no URL run param
-      if (
-        !store.remoteHostName &&
-        !store.run &&
-        !runId &&
-        store.phase !== "loading"
-      ) {
+      if (!store.remoteHostName && !store.run && !runId && store.phase !== "loading") {
         const models = cliModelValues();
         const selectedModel = chooseCliModelForPlatform(store.platformId);
         if (selectedModel && (!store.model || !models.includes(store.model))) {
@@ -2526,6 +2526,40 @@
     }
   }
 
+  function preferredWorkspacePathTool(): api.WorkspaceTool | null {
+    const tools = workspaceToolsLoaded ? workspaceTools : workspaceLauncherTools;
+    const fallbackTools = tools.length > 0 ? tools : FALLBACK_WORKSPACE_TOOLS;
+    let preferredId = "";
+    try {
+      preferredId = localStorage.getItem("helion:workspace-tool") ?? "";
+    } catch {
+      preferredId = "";
+    }
+    const preferred = fallbackTools.find((tool) => tool.id === preferredId);
+    if (preferred && !SHELL_WORKSPACE_TOOL_IDS.has(preferred.id)) return preferred;
+    return (
+      fallbackTools.find((tool) => !SHELL_WORKSPACE_TOOL_IDS.has(tool.id)) ?? preferred ?? null
+    );
+  }
+
+  async function openWorkspacePath(path: string) {
+    const cwd = promptCwd?.trim();
+    const tool = preferredWorkspacePathTool();
+    if (!path || store.isRemote || !cwd || !tool) return;
+    try {
+      await api.openWorkspacePath(tool.id, path, cwd, tool.source ?? null);
+    } catch (e) {
+      showChatToast(String(e instanceof Error ? e.message : e));
+      dbgWarn("chat", "failed to open workspace path", {
+        tool: tool.id,
+        path,
+        cwd,
+        source: tool.source,
+        error: e,
+      });
+    }
+  }
+
   // ── Project init detection ──
   let showInitHint = $derived(
     projectInitStatus !== null && !projectInitStatus.has_claude_md && !store.run,
@@ -3112,6 +3146,13 @@
     if (styles) lines.push(`Styles: ${styles}`);
     lines.push(`HTML: ${sel.outerHtmlSnippet.slice(0, 500)}`);
     return lines.join("\n");
+  }
+
+  function addSelectionQuoteToPrompt(text: string) {
+    const quote = formatSelectionQuote(text);
+    if (!quote) return;
+    promptRef?.appendBlock(quote);
+    showChatToast(t("toast_selectionQuoted"));
   }
 
   async function handleRalphCancel() {
@@ -5492,8 +5533,15 @@
     runId={store.run?.id ?? ""}
     isRemote={store.isRemote}
     appMode={activeAppMode}
+    onOpenPathInWorkspaceTool={openWorkspacePath}
     bind:requestedPreviewPath
     bind:requestedPreviewMode
+  />
+
+  <SelectionQuotePopover
+    rootEl={chatAreaRef}
+    disabled={!promptVisible || welcomeVisible}
+    onAddQuote={addSelectionQuoteToPrompt}
   />
 
   <RewindModal

@@ -514,6 +514,17 @@ pub async fn dispatch_command(
             crate::commands::workspace::open_workspace_tool(kind, cwd, source).await?;
             Ok(json!(true))
         }
+        "open_workspace_path" => {
+            let kind = extract_str(&params, "kind")?;
+            let path = extract_str(&params, "path")?;
+            let cwd = extract_str(&params, "cwd")?;
+            let source = params
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            crate::commands::workspace::open_workspace_path(kind, path, cwd, source).await?;
+            Ok(json!(true))
+        }
         "detect_workspace_tools" => {
             let result = crate::commands::workspace::detect_workspace_tools().await?;
             serde_json::to_value(result).map_err(|e| e.to_string())

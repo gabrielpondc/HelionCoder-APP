@@ -12,7 +12,8 @@
   import * as api from "$lib/api";
   import { getTransport } from "$lib/transport";
   import { dbg, dbgWarn } from "$lib/utils/debug";
-  import { t } from "$lib/i18n/index.svelte";
+  import { currentLocale, t } from "$lib/i18n/index.svelte";
+  import { loadCliVersionInfo } from "$lib/stores";
 
   let {
     open = $bindable(false),
@@ -238,6 +239,49 @@
           showResultModal(t("cmd_doctor"), lines);
         } catch (e) {
           showResultModal(t("cmd_error"), String(e));
+        }
+        break;
+
+      case "check_updates": {
+        try {
+          const info = await api.checkForUpdates();
+          if (!info.latestVersion) {
+            window.alert(t("appUpdate_checkFailed"));
+            break;
+          }
+          if (!info.hasUpdate) {
+            window.alert(t("appUpdate_upToDate", { version: info.currentVersion || "-" }));
+            break;
+          }
+          const confirmed = window.confirm(
+            `${t("appUpdate_available", { version: info.latestVersion })}\n\n${t(
+              "appUpdate_restartConfirm",
+            )}`,
+          );
+          if (!confirmed) break;
+          const result = await api.installAppUpdate(info.downloadUrl, info.assetName);
+          if (!result.success) window.alert(result.output || t("infoPanel_updateFailed"));
+        } catch (e) {
+          dbgWarn("cmd", "check_updates error", e);
+          window.alert(t("appUpdate_checkFailed"));
+        }
+        break;
+      }
+
+      case "update_cli":
+        try {
+          const result = await api.runCliUpdate();
+          await loadCliVersionInfo();
+          const text =
+            result.output ||
+            (result.success
+              ? currentLocale().startsWith("zh")
+                ? "CLI 更新命令已完成。"
+                : "CLI update finished."
+              : t("infoPanel_updateFailed"));
+          window.alert(text);
+        } catch (e) {
+          window.alert(String((e as Error)?.message ?? e));
         }
         break;
     }
